@@ -1,70 +1,86 @@
-/**
- * The room's perspective: how a place on the flat floor plan lands inside the
- * box you look into. Pure arithmetic — the plan stays 0–100, the screen stays
- * 0–100, and this file pins down that the one maps onto the other the way a
- * room would.
- *
- * @module dsh-team/tests/stagecraft
- */
-
 import { describe, expect, it } from 'vitest'
-import { SHELL, WALL_TOP, depthOf, onWall, project, shellVars, widthAt } from '../src/client/stagecraft.ts'
+import { Vector3 } from 'three'
+import { Stagecraft, toPlan, toWorld } from '../src/client/stagecraft.ts'
 
-describe('the projection', () => {
-  it('puts the near edge of the floor at the bottom of the stage', () => {
-    expect(project({ x: 50, y: 100 }).top).toBe(SHELL.bottom)
-    expect(project({ x: 50, y: 100 }).left).toBe(50)
+const corners = [
+  [-5.24, -0.28, 3.58], [5.24, -0.28, 3.58],
+  [-5.24, -0.28, -3.74], [5.24, -0.28, -3.74],
+  [-5.2, 3.4, -3.7], [5.2, 3.4, -3.7],
+  [-5.2, 3.4, -2.25], [5.2, 3.4, -2.25],
+] as const
+
+describe('room camera', () => {
+  it('maps the floor plan into world units and back', () => {
+    expect(toWorld({ x: 0, y: 100 }, 1).toArray()).toEqual([-5, 1, 3.5])
+    expect(toWorld({ x: 50, y: 50 }).toArray()).toEqual([0, 0, 0])
+    expect(toPlan(new Vector3(2.5, 9, -1.75))).toEqual({ x: 75, y: 25 })
   })
 
-  it('puts the back wall at the top of the floor, on the centre line', () => {
-    expect(project({ x: 50, y: 0 }).top).toBe(SHELL.top)
-    expect(project({ x: 50, y: 0 }).left).toBe(50)
+  it.each([[1500, 700], [720, 720], [320, 760], [1600, 340]])(
+    'keeps the floor and wall edges in a %i × %i tab at maximum parallax', (width, height) => {
+      const stage = new Stagecraft()
+      stage.resize(width, height)
+      for (const x of [-1, 0, 1]) {
+        for (const y of [-1, 1]) {
+          stage.setLean(x, y)
+          stage.step(5)
+          for (const corner of corners) {
+            const screen = new Vector3(...corner).project(stage.camera)
+            expect(Math.abs(screen.x), `horizontal edge at ${corner}`).toBeLessThan(0.99)
+            expect(Math.abs(screen.y), `vertical edge at ${corner}`).toBeLessThan(0.99)
+            expect(screen.z).toBeGreaterThan(-1)
+            expect(screen.z).toBeLessThan(1)
+          }
+        }
+      }
+    },
+  )
+
+  it('makes a nearby crew member larger than one at the back of the room', () => {
+    const stage = new Stagecraft()
+    const back = stage.project({ x: 50, y: 15 })
+    const front = stage.project({ x: 50, y: 85 })
+    expect(front.unit).toBeGreaterThan(back.unit)
+    expect(front.top).toBeGreaterThan(back.top)
   })
 
-  it('draws the floor wider at the front than at the back', () => {
-    expect(widthAt(0)).toBe(1)
-    expect(widthAt(1)).toBe(SHELL.far)
-    expect(project({ x: 0, y: 100 }).left).toBeLessThan(project({ x: 0, y: 0 }).left)
-    expect(project({ x: 100, y: 100 }).left).toBeGreaterThan(project({ x: 100, y: 0 }).left)
-  })
-
-  it('keeps the centre line straight, whatever the depth', () => {
-    for (let y = 0; y <= 100; y += 10) expect(project({ x: 50, y }).left).toBe(50)
-  })
-
-  it('shrinks what stands further back by exactly the narrowing of the floor', () => {
-    expect(project({ x: 50, y: 40 }).scale).toBeLessThan(project({ x: 50, y: 60 }).scale)
-    expect(project({ x: 50, y: 100 }).scale).toBe(1)
-  })
-
-  it('crowds the plan toward the back: equal steps cover less screen there', () => {
-    const nearGap = project({ x: 50, y: 40 }).top - project({ x: 50, y: 50 }).top
-    const farGap = project({ x: 50, y: 0 }).top - project({ x: 50, y: 10 }).top
-    expect(Math.abs(farGap)).toBeLessThan(Math.abs(nearGap))
-  })
-
-  it('runs the depth through a smooth, monotone curve', () => {
-    expect(depthOf(0)).toBe(1)
-    expect(depthOf(100)).toBe(0)
-    for (let y = 0; y < 100; y += 5) {
-      expect(depthOf(y)).toBeGreaterThanOrEqual(depthOf(y + 5))
+  it('restores the same framing after repeatedly opening a narrow tab', () => {
+    const stage = new Stagecraft()
+    stage.resize(1280, 700)
+    const before = stage.project({ x: 19, y: 78 })
+    for (let resize = 0; resize < 5; resize += 1) {
+      stage.resize(320, 760)
+      stage.resize(1280, 700)
     }
+    expect(stage.project({ x: 19, y: 78 })).toEqual(before)
   })
 
-  it('puts a wall fixture over the floor place it belongs to', () => {
-    expect(onWall(50)).toBe(50)
-    expect(onWall(0)).toBe(50 - (SHELL.far * 100) / 2)
-    expect(onWall(100)).toBe(50 + (SHELL.far * 100) / 2)
-  })
-})
-
-describe('the shell', () => {
-  it('hands the stylesheet the same numbers the projection uses', () => {
-    const vars = shellVars() as Record<string, string>
-    expect(Number.parseFloat(vars['--team-floor-top']!)).toBe(SHELL.top)
-    expect(Number.parseFloat(vars['--team-far-width']!)).toBe(SHELL.far * 100)
-    expect(Number.parseFloat(vars['--team-far-inset']!)).toBeCloseTo(((1 - SHELL.far) / 2) * 100)
-    expect(Number.parseFloat(vars['--team-wall-top']!)).toBe(WALL_TOP)
+  it('holds the last valid framing while its tab has zero size', () => {
+    const stage = new Stagecraft()
+    const before = stage.project({ x: 19, y: 78 })
+    stage.resize(0, 0)
+    expect(stage.project({ x: 19, y: 78 })).toEqual(before)
   })
 
+  it('returns to the resting camera when reduced motion is enabled', () => {
+    const stage = new Stagecraft()
+    const resting = stage.camera.position.clone()
+    stage.setLean(1, -1)
+    stage.step(1)
+    expect(stage.camera.position.equals(resting)).toBe(false)
+
+    stage.setReducedMotion(true)
+    stage.setLean(-1, 1)
+    stage.step(1)
+    expect(stage.camera.position.toArray()).toEqual(resting.toArray())
+  })
+
+  it('keeps reduced motion active after a hidden tab becomes visible', () => {
+    const stage = new Stagecraft()
+    stage.setReducedMotion(true)
+    stage.setVisible(false)
+    expect(stage.getActivity()).toBe('hidden')
+    stage.setVisible(true)
+    expect(stage.getActivity()).toBe('still')
+  })
 })

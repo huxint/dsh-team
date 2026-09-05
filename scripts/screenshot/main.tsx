@@ -1,33 +1,33 @@
-/**
- * Mount the agent-team stage over one representative team snapshot, exactly
- * the way the web shell does it — theme tokens on the root, then the stage
- * with the projected state and the locale dictionary. The shell's platform
- * modules (state store, translator) are trued up by the vite aliases.
- */
 import { createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { TeamStage } from '../../src/client/TeamStage.tsx'
-import { zh } from '../../src/client/locales.ts'
+import { zh, en } from '../../src/client/locales.ts'
 import { crewState, sessionState } from './fixture'
-import { themeTokens } from './theme'
+import { themeTokens, darkTokens } from './theme'
 
-for (const [name, value] of Object.entries(themeTokens)) {
-  document.documentElement.style.setProperty(name, value)
-}
-document.documentElement.style.fontFamily =
-  "system-ui, -apple-system, 'Noto Sans CJK SC', sans-serif"
+const params = new URLSearchParams(location.search)
+const sheet = document.createElement('style')
+const declarations = (tokens: Record<string, string>): string => Object.entries(tokens).map(([name, value]) => `${name}:${value};`).join('')
+sheet.textContent = `body{${declarations(themeTokens)}}body[data-ds-dark-theme]{${declarations(darkTokens)}}`
+document.head.append(sheet)
+document.body.toggleAttribute('data-ds-dark-theme', params.get('theme') === 'dark')
+document.documentElement.style.fontFamily = 'var(--dsw-font-family)'
+document.documentElement.lang = params.get('locale') === 'en' ? 'en' : 'zh-CN'
+const dictionary = params.get('locale') === 'en' ? en : zh
 
 const translate = (key: string, params?: Record<string, string | number>): string => {
-  const text = (zh as Record<string, string>)[key] ?? key
+  const text = (dictionary as Record<string, string>)[key] ?? key
   return params === undefined ? text
     : Object.entries(params).reduce((line, [name, value]) =>
         line.replaceAll(`{${name}}`, String(value)), text)
 }
 
+const sessions = sessionState()
+
 createRoot(document.getElementById('stage')!).render(
   createElement(TeamStage, {
     useTeam: (select: (snap: typeof crewState) => unknown) => select(crewState),
-    useSessions: (select: (snap: ReturnType<typeof sessionState>) => unknown) => select(sessionState()),
+    useSessions: (select: (snap: ReturnType<typeof sessionState>) => unknown) => select(sessions),
     openMember: () => {},
     openLeader: () => {},
     t: translate,

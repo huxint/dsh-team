@@ -106,6 +106,11 @@ describe('presence', () => {
     expect(screen.getByText('1 working')).toBeTruthy()
   })
 
+  it('includes a working leader in the working-member count', () => {
+    stage({}, { running: ['leader-1', 'child-1'] })
+    expect(screen.getByText('2 working').textContent).toBe('2 working')
+  })
+
   it('counts the open tasks against the whole list', () => {
     stage({ tasks: [{ taskId: 't1', title: 'a', status: 'done' }, { taskId: 't2', title: 'b', status: 'active' }] })
     expect(screen.getByText('1/2 tasks')).toBeTruthy()
@@ -137,16 +142,13 @@ describe('the room', () => {
     expect(screen.getByLabelText('Open the session of Bob')).toBeTruthy()
   })
 
-  it('gives every member a desk of its own, with a computer on it', () => {
-    const { container } = stage()
-    for (const id of ['leader-1', 'child-1', 'child-2']) {
-      const station = desk(container, id)
-      expect(station, id).toBeTruthy()
-      expect(station?.querySelector('[data-prop="monitor"]'), id).toBeTruthy()
-      expect(station?.querySelector('[data-prop="keyboard"]'), id).toBeTruthy()
-      expect(station?.querySelector('[data-prop="mug"]'), id).toBeTruthy()
-    }
-    expect(container.querySelectorAll('[data-desk]')).toHaveLength(3)
+  it('describes each member’s current work through its accessible screen text', () => {
+    const { container } = stage({
+      tasks: [{ taskId: 't1', title: 'Review the authentication boundary', assigneeId: 'child-1', status: 'active' }],
+    })
+    const member = screen.getByLabelText('Open the session of Alice')
+    const description = container.querySelector(`[id="${member.getAttribute('aria-describedby')}"]`)
+    expect(description?.textContent).toBe('Review the authentication boundary')
   })
 
   it('puts a preset picture on a screen, and switches an idle one off', () => {
@@ -242,17 +244,6 @@ describe('the room', () => {
     expect(new Set(masks).size).toBe(4)
   })
 
-  it('furnishes the room instead of labelling it', () => {
-    const { container } = stage()
-    for (const prop of [
-      'window', 'whiteboard', 'clock', 'shelf', 'calendar', 'ac',
-      'sofa', 'table', 'plant', 'cooler', 'rug', 'treadmill',
-      'cabinet', 'printer', 'coffee', 'cat',
-    ]) {
-      expect(container.querySelector(`[data-prop="${prop}"]`), prop).toBeTruthy()
-    }
-  })
-
   it('carries each relation on the member itself', () => {
     const { container } = stage()
     expect(person(container, 'leader-1')?.getAttribute('data-relation')).toBe('lead')
@@ -327,8 +318,7 @@ describe('the delivery', () => {
     vi.useFakeTimers()
     try {
       const { container } = stage({ messages: carried })
-      const station = desk(container, 'child-1')
-      const home = `${station?.style.left ?? ''},${station?.style.top ?? ''}`
+      const home = spot(container, 'child-1')
       act(() => { vi.advanceTimersByTime(3_000) })
       const visiting = spot(container, 'child-1')
       expect(visiting).not.toBe(home)
@@ -436,6 +426,35 @@ describe('the drawer', () => {
     openPanel(en['stage.board'])
     fireEvent.click(screen.getByLabelText(en['drawer.close']))
     expect(container.querySelector('[data-column]')).toBeNull()
+  })
+
+  it('clears the member highlight when its hovered ledger closes', () => {
+    const { container } = stage({ messages })
+    openPanel(en['stage.feed'])
+    fireEvent.mouseEnter(container.querySelector('[data-message-kind="report"]')!)
+    expect(person(container, 'child-1')?.getAttribute('data-focus')).toBe('true')
+
+    fireEvent.keyDown(screen.getByLabelText(en['drawer.close']), { key: 'Escape' })
+    expect(person(container, 'child-1')?.getAttribute('data-focus')).toBeNull()
+  })
+
+  it('returns keyboard focus to the drawer’s dock button on Escape', () => {
+    stage({ tasks })
+    const button = screen.getByRole('button', { name: en['stage.board'] })
+    fireEvent.click(button)
+    expect(document.activeElement).toBe(screen.getByLabelText(en['drawer.close']))
+
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    expect(screen.queryByLabelText(en['drawer.close'])).toBeNull()
+    expect(document.activeElement).toBe(button)
+  })
+
+  it('returns focus to the active dock button after using the close button', () => {
+    stage({ board })
+    const button = screen.getByRole('button', { name: en['stage.workspace'] })
+    fireEvent.click(button)
+    fireEvent.click(screen.getByLabelText(en['drawer.close']))
+    expect(document.activeElement).toBe(button)
   })
 
   it('counts what waits behind each door', () => {

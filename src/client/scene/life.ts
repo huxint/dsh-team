@@ -1,39 +1,21 @@
-/**
- * The room's ambient life, kept quiet: dust turning in the light shafts, the
- * pendants swaying a little in the air conditioner's breeze, and the office
- * cat, which crosses the front of the room now and again and otherwise sits
- * where it likes. The crew's own motion is the story; this is the room
- * breathing behind it.
- *
- * Everything here is driven by one clock and advanced by `step`, which says
- * whether anything moved — a still room is not redrawn. Under reduced motion
- * nothing here moves at all: the cat sits, the dust hangs, the pendants hang.
- */
-import { AdditiveBlending, BufferAttribute, BufferGeometry, Group, Points, PointsMaterial, Vector3 } from 'three'
-import { capsule, cylinder, named, rounded, SHELL_LAYER, sphere, type Shop } from './kit.ts'
+import { AdditiveBlending, BufferAttribute, BufferGeometry, CatmullRomCurve3, Group, Points, PointsMaterial, TubeGeometry, Vector3 } from 'three'
+import { cylinder, disposeGeometry, named, piece, rounded, SHELL_LAYER, sphere, type Shop } from './kit.ts'
 import { SUN } from './lights.ts'
 import { acrossOf, BACK, WINDOW, WINDOWS } from './shell.ts'
 import { paintGlow, seeded } from './textures.ts'
 
-/** How many motes of dust hang in the light. */
 const MOTES = 72
 
-/** Where the cat sits when it is not going anywhere. */
 const CAT_REST = { x: 3.1, z: 3.05 }
 
-/** Where the cat walks to, across the front of the room. */
 const CAT_FAR = { x: -4.4, z: 3.05 }
 
-/** The cat's pace, in world units per second. */
 const CAT_PACE = 0.42
 
-/** How long the cat sits between crossings, at each end. */
 const CAT_SIT = { rest: 34, far: 9 }
 
-/** What the cat is doing. */
 type CatPhase = 'rest' | 'out' | 'far' | 'back'
 
-/** The room's small motions. */
 export class Life {
   readonly group: Group
   private readonly cat: Group
@@ -46,11 +28,6 @@ export class Life {
   private phaseAt = 0
   private clock = 0
 
-  /**
-   * @param shop - where the materials come from.
-   * @param pendants - the lamps that sway; their pivots are at the ceiling.
-   * @param still - whether the reader asked for no motion: the room then holds one pose.
-   */
   constructor(shop: Shop, private readonly pendants: readonly Group[], public still: boolean) {
     this.group = named(new Group(), 'life')
     const { cat, legs, tail } = buildCat(shop)
@@ -59,6 +36,7 @@ export class Life {
     this.tail = tail
     this.group.add(cat)
     this.cat.position.set(CAT_REST.x, 0, CAT_REST.z)
+    this.cat.rotation.y = -0.6
     this.pose(0)
     if (!shop.palette.dark) {
       const dust = buildDust(shop)
@@ -71,11 +49,10 @@ export class Life {
     }
   }
 
-  /**
-   * Advance the room by so many seconds.
-   * @param seconds - how long since the last step.
-   * @returns whether anything moved and the room wants drawing again.
-   */
+  get catWalking(): boolean {
+    return this.phase === 'out' || this.phase === 'back'
+  }
+
   step(seconds: number): boolean {
     if (this.still) return false
     this.clock += seconds
@@ -89,16 +66,11 @@ export class Life {
     return true
   }
 
-  /** Free what the life owns; its materials belong to the shop. */
   dispose(): void {
-    this.group.traverse(child => {
-      if ('geometry' in child && typeof (child as { geometry?: { dispose?: () => void } }).geometry?.dispose === 'function') {
-        (child as { geometry: { dispose: () => void } }).geometry.dispose()
-      }
-    })
+    this.group.removeFromParent()
+    disposeGeometry(this.group)
   }
 
-  /** Let the dust fall slowly and swirl, wrapping back to the top of the shaft. */
   private drift(seconds: number): void {
     if (this.dust === undefined || this.motes === undefined || this.seeds === undefined) return
     const t = this.clock
@@ -109,7 +81,6 @@ export class Life {
       this.motes[i + 1]! -= (0.022 + seed * 0.02) * seconds
       this.motes[i + 2]! += Math.cos(t * 0.5 + seed * 9) * 0.015 * seconds
       if (this.motes[i + 1]! < 0.05) {
-        // Back to the top of its shaft, at a new place across it.
         const window = index % WINDOWS.length
         const x = acrossOf(WINDOWS[window]!) + (seed - 0.5) * WINDOW.width
         const y = WINDOW.sill + 0.2 + ((seed * 7) % 1) * (WINDOW.height - 0.3)
@@ -120,10 +91,9 @@ export class Life {
         this.motes[i + 2] = at.z
       }
     }
-    ;(this.dust.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true
+    ; (this.dust.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true
   }
 
-  /** The cat's round: sit, cross the room, sit, come back. */
   private prowl(seconds: number): void {
     this.phaseAt += seconds
     const crossing = Math.hypot(CAT_FAR.x - CAT_REST.x, CAT_FAR.z - CAT_REST.z) / CAT_PACE
@@ -140,7 +110,7 @@ export class Life {
         const from = this.phase === 'out' ? CAT_REST : CAT_FAR
         const to = this.phase === 'out' ? CAT_FAR : CAT_REST
         this.cat.position.set(from.x + (to.x - from.x) * through, 0, from.z + (to.z - from.z) * through)
-        this.cat.rotation.y = to.x < from.x ? Math.PI : 0
+        this.cat.rotation.y = to.x < from.x ? -Math.PI / 2 : Math.PI / 2
         const stride = (this.phaseAt * CAT_PACE) / 0.22
         this.legs.forEach((leg, index) => { leg.rotation.x = Math.sin(stride * Math.PI * 2 + (index % 2) * Math.PI) * 0.45 })
         this.tail.rotation.z = Math.sin(this.clock * 3) * 0.2
@@ -165,55 +135,72 @@ export class Life {
     }
   }
 
-  /** Sitting (0) or walking (1): a sitting cat is up on its haunches with its tail round its feet. */
   private pose(walking: number): void {
     const body = this.cat.getObjectByName('catBody')
-    if (body !== undefined) body.rotation.x = -0.55 * (1 - walking)
+    if (body !== undefined) body.rotation.x = -0.42 * (1 - walking)
     const head = this.cat.getObjectByName('catHead')
-    if (head !== undefined) head.position.y = 0.3 + 0.05 * (1 - walking)
-    this.tail.rotation.set(0, walking > 0 ? 0 : 1.4, walking > 0 ? 0.3 : 0.9)
+    if (head !== undefined) head.position.y = 0.32 + 0.04 * (1 - walking)
+    this.tail.rotation.x = walking > 0 ? -0.6 : 0
+    if (walking === 0) this.tail.rotation.z = 0
   }
 }
 
-/** The office cat, built from a capsule, a sphere, two cones and a tail. */
 function buildCat(shop: Shop): { cat: Group, legs: Group[], tail: Group } {
   const p = shop.palette
   const cat = named(new Group(), 'cat')
-  const fur = shop.matte(p.cat, { roughness: 0.95 })
-  const dark = shop.matte(p.catDark, { roughness: 0.95 })
-  const body = capsule(0.085, 0.2, fur, { y: 0.19, rx: Math.PI / 2 })
-  body.name = 'catBody'
+  const fur = shop.matte(p.cat, { roughness: 1 })
+  const dark = shop.matte(p.catDark, { roughness: 1 })
+  const cream = shop.matte(p.paper, { roughness: 1 })
+  cat.add(shop.contact(0.6, 0.7))
+  const body = named(new Group(), 'catBody')
+  body.position.y = 0.2
+  const torso = sphere(0.1, fur)
+  torso.scale.set(0.9, 1.05, 1.75)
+  body.add(torso)
+  for (const z of [-0.075, -0.015, 0.045]) {
+    body.add(rounded(0.12, 0.018, 0.025, 0.008, dark, { y: 0.09, z }, { cast: false }))
+  }
   cat.add(body)
-  for (const z of [-0.06, 0.0, 0.06]) {
-    cat.add(rounded(0.12, 0.03, 0.03, 0.012, dark, { y: 0.27, z }, { cast: false }))
-  }
-  const head = sphere(0.075, fur, { y: 0.3, z: 0.18 })
-  head.name = 'catHead'
-  cat.add(head)
+
+  const head = named(new Group(), 'catHead')
+  head.position.set(0, 0.32, 0.16)
+  head.add(sphere(0.082, fur))
   for (const side of [-1, 1]) {
-    cat.add(cylinder(0.001, 0.03, 0.06, fur, { x: side * 0.045, y: 0.37, z: 0.17, rz: side * -0.25 }, 8, { cast: false }))
-    cat.add(sphere(0.011, shop.matte(p.leaf, { emissive: p.leaf, emissiveIntensity: 0.6 }), { x: side * 0.03, y: 0.31, z: 0.245 }, { cast: false }))
+    head.add(cylinder(0, 0.032, 0.07, fur, { x: side * 0.048, y: 0.073, z: -0.004, rz: side * -0.22 }, 4))
+    head.add(cylinder(0, 0.019, 0.04, dark, { x: side * 0.048, y: 0.075, z: 0.013, rz: side * -0.22 }, 4, { cast: false }))
+    head.add(sphere(0.024, cream, { x: side * 0.018, y: -0.021, z: 0.066 }, { cast: false }))
+    head.add(sphere(0.012, shop.matte(p.screenBezel), { x: side * 0.034, y: 0.014, z: 0.071 }, { cast: false }))
+    head.add(sphere(0.0035, cream, { x: side * 0.034 - 0.003, y: 0.018, z: 0.081 }, { cast: false }))
+    for (const offset of [-1, 1]) {
+      head.add(cylinder(0.001, 0.001, 0.06, cream, { x: side * 0.07, y: -0.014 + offset * 0.006, z: 0.066, rz: side * (Math.PI / 2 + offset * 0.12) }, 3, { cast: false }))
+    }
   }
-  cat.add(sphere(0.012, shop.matte(p.error, { roughness: 0.6 }), { y: 0.28, z: 0.255 }, { cast: false }))
+  head.add(sphere(0.008, dark, { y: -0.012, z: 0.089 }, { cast: false }))
+  cat.add(head)
+
   const legs: Group[] = []
-  for (const [x, z] of [[-0.05, 0.08], [0.05, 0.08], [-0.05, -0.08], [0.05, -0.08]] as const) {
+  for (const [x, z] of [[-0.055, 0.095], [0.055, 0.095], [-0.055, -0.1], [0.055, -0.1]] as const) {
     const hip = new Group()
-    hip.position.set(x, 0.14, z)
-    hip.add(cylinder(0.02, 0.022, 0.14, fur, { y: -0.07 }, 8))
+    hip.position.set(x, 0.13, z)
+    hip.add(cylinder(0.018, 0.022, 0.12, fur, { y: -0.06 }, 8))
+    hip.add(sphere(0.025, cream, { y: -0.11, z: 0.009 }, { cast: false }))
     legs.push(hip)
     cat.add(hip)
   }
   const tail = new Group()
-  tail.position.set(0, 0.22, -0.16)
-  tail.add(cylinder(0.014, 0.02, 0.24, fur, { y: 0.12 }, 8, { cast: false }))
-  tail.add(sphere(0.02, dark, { y: 0.25 }, { cast: false }))
+  tail.position.set(0, 0.06, -0.13)
+  const curl = new CatmullRomCurve3([
+    new Vector3(0, 0, 0), new Vector3(-0.04, 0, -0.13),
+    new Vector3(-0.15, -0.02, -0.1), new Vector3(-0.16, -0.02, 0.08),
+  ])
+  tail.add(piece(new TubeGeometry(curl, 12, 0.017, 6, false), fur, {}, { cast: false }))
+  tail.add(sphere(0.018, dark, { x: -0.16, y: -0.02, z: 0.08 }, { cast: false }))
   cat.add(tail)
   return { cat, legs, tail }
 }
 
-/** Motes of dust seeded into the two shafts of daylight. */
 function buildDust(shop: Shop): { points: Points, positions: Float32Array, seeds: Float32Array } | undefined {
-  const glow = shop.texture(64, 64, paintGlow())
+  const glow = shop.texture(64, 64, paintGlow(shop.palette))
   if (glow === null) return undefined
   const random = seeded(101)
   const positions = new Float32Array(MOTES * 3)

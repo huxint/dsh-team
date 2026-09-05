@@ -1,19 +1,7 @@
-/**
- * What the room paints onto its surfaces.
- *
- * A toy diorama is mostly plain colour, but a few surfaces are pictures: the
- * grain in the floorboards, the sky outside the windows, what is written on
- * the whiteboard, what is on each screen. Those are drawn here, into small
- * canvases, in the palette's own colours — there is no image file anywhere in
- * this room, so a theme change repaints every picture along with every wall.
- *
- * Every painter is deterministic: grain, clouds and scribbles come from a
- * seeded generator, so the same theme paints the same room twice.
- */
 import type { Painter } from './kit.ts'
 import { css, mix, type Palette } from './palette.ts'
 
-/** A small deterministic generator: the same seed, the same grain. */
+// Fixed seeds keep texture painting identical across theme rebuilds and screenshots.
 export function seeded(seed: number): () => number {
   let state = (seed >>> 0) || 1
   return () => {
@@ -26,19 +14,15 @@ export function seeded(seed: number): () => number {
   }
 }
 
-/** The preset pictures a workstation monitor can show. */
 export const APPS = ['code', 'chart', 'doc', 'mail', 'grid', 'term'] as const
 
-/** One preset picture. */
 export type AppKind = typeof APPS[number]
 
-/** Which picture one seat's monitor shows; the leader watches the dashboard. */
 export function appOf(seat: number): AppKind {
   if (seat < 0) return 'chart'
   return APPS[seat % APPS.length] ?? 'code'
 }
 
-/** A rounded rectangle path, ready to fill or stroke. */
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
   const radius = Math.min(r, w / 2, h / 2)
   ctx.beginPath()
@@ -54,10 +38,6 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath()
 }
 
-/**
- * Floorboards: planks running across the room, staggered, each a slightly
- * different shade with a little grain and a dark seam between. Tiles.
- */
 export function paintFloor(p: Palette): Painter {
   return (ctx, w, h) => {
     const random = seeded(7)
@@ -71,10 +51,9 @@ export function paintFloor(p: Palette): Painter {
       let x = -offset
       while (x < w) {
         const length = w / 2 + random() * (w / 3)
-        const shade = mix(p.floor, p.woodDark, 0.04 + random() * 0.12)
+        const shade = mix(p.floor, p.woodDark, 0.025 + random() * 0.08)
         ctx.fillStyle = css(mix(shade, p.white, random() * 0.05))
         ctx.fillRect(x, y, length, plank)
-        // Grain: a few long faint strokes down the plank.
         ctx.strokeStyle = css(p.woodDark, 0.09)
         ctx.lineWidth = 1
         for (let line = 0; line < 4; line += 1) {
@@ -84,25 +63,21 @@ export function paintFloor(p: Palette): Painter {
           ctx.bezierCurveTo(x + length * 0.3, gy + random() * 3 - 1.5, x + length * 0.7, gy - random() * 3 + 1.5, x + length - 2, gy)
           ctx.stroke()
         }
-        // The end seam of the plank.
-        ctx.fillStyle = css(p.floorSeam, 0.55)
+        ctx.fillStyle = css(p.floorSeam, 0.3)
         ctx.fillRect(x + length - 1, y, 1.5, plank)
         x += length
       }
-      // The long seam between rows.
-      ctx.fillStyle = css(p.floorSeam, 0.7)
+      ctx.fillStyle = css(p.floorSeam, 0.35)
       ctx.fillRect(0, y, w, 1.5)
     }
   }
 }
 
-/** The rug in the break corner: a plain field with a woven border and a fringe. */
 export function paintRug(p: Palette): Painter {
   return (ctx, w, h) => {
     const random = seeded(11)
     ctx.fillStyle = css(p.rug)
     ctx.fillRect(0, 0, w, h)
-    // A soft weave: faint alternating lines in both directions.
     ctx.strokeStyle = css(p.rugBorder, 0.16)
     ctx.lineWidth = 1
     for (let y = 3; y < h; y += 6) {
@@ -111,14 +86,12 @@ export function paintRug(p: Palette): Painter {
       ctx.lineTo(w, y + (random() - 0.5))
       ctx.stroke()
     }
-    // The border, two bands.
     const inset = w * 0.06
     ctx.strokeStyle = css(p.rugBorder)
     ctx.lineWidth = w * 0.028
     ctx.strokeRect(inset, inset, w - inset * 2, h - inset * 2)
     ctx.lineWidth = w * 0.01
     ctx.strokeRect(inset * 1.9, inset * 1.9, w - inset * 3.8, h - inset * 3.8)
-    // A diamond in the middle.
     ctx.beginPath()
     ctx.moveTo(w / 2, h * 0.3)
     ctx.lineTo(w * 0.62, h / 2)
@@ -129,19 +102,16 @@ export function paintRug(p: Palette): Painter {
   }
 }
 
-/** The whiteboard: a diagram half-rubbed-out, three sticky notes, a marker line. */
 export function paintWhiteboard(p: Palette): Painter {
   return (ctx, w, h) => {
     ctx.fillStyle = css(p.paper)
     ctx.fillRect(0, 0, w, h)
-    // Ghost of a rubbed-off diagram.
-    ctx.strokeStyle = css(p.ink, 0.07)
+    ctx.strokeStyle = css(p.screenBezel, 0.07)
     ctx.lineWidth = 6
     ctx.beginPath()
     ctx.moveTo(w * 0.14, h * 0.7)
     ctx.bezierCurveTo(w * 0.3, h * 0.2, w * 0.55, h * 0.9, w * 0.8, h * 0.35)
     ctx.stroke()
-    // What is on it now: a box, an arrow, three lines of notes.
     ctx.lineCap = 'round'
     ctx.lineWidth = 3.5
     ctx.strokeStyle = css(p.hue)
@@ -165,8 +135,7 @@ export function paintWhiteboard(p: Palette): Painter {
     ctx.moveTo(w * 0.12, h * 0.82)
     ctx.lineTo(w * 0.5, h * 0.82)
     ctx.stroke()
-    // A small chart on the right.
-    ctx.strokeStyle = css(p.ink, 0.7)
+    ctx.strokeStyle = css(p.screenBezel, 0.7)
     ctx.lineWidth = 2
     ctx.beginPath()
     ctx.moveTo(w * 0.58, h * 0.22)
@@ -181,17 +150,16 @@ export function paintWhiteboard(p: Palette): Painter {
     ctx.lineTo(w * 0.76, h * 0.46)
     ctx.lineTo(w * 0.86, h * 0.28)
     ctx.stroke()
-    // Sticky notes.
     const notes: readonly [number, number, number][] = [[0.62, 0.66, -4], [0.76, 0.7, 3], [0.84, 0.16, 5]]
     for (const [nx, ny, tilt] of notes) {
       ctx.save()
       ctx.translate(w * nx, h * ny)
       ctx.rotate((tilt * Math.PI) / 180)
-      ctx.fillStyle = css(p.ink, 0.12)
+      ctx.fillStyle = css(p.screenBezel, 0.12)
       ctx.fillRect(2, 3, w * 0.1, w * 0.1)
       ctx.fillStyle = css(tilt > 0 ? mix(p.warm, p.white, 0.35) : mix(p.leaf, p.white, 0.45))
       ctx.fillRect(0, 0, w * 0.1, w * 0.1)
-      ctx.strokeStyle = css(p.ink, 0.35)
+      ctx.strokeStyle = css(p.screenBezel, 0.35)
       ctx.lineWidth = 1.5
       ctx.beginPath()
       ctx.moveTo(w * 0.015, w * 0.035)
@@ -204,7 +172,6 @@ export function paintWhiteboard(p: Palette): Painter {
   }
 }
 
-/** The wall calendar: a header band and a grid with one day ringed. */
 export function paintCalendar(p: Palette): Painter {
   return (ctx, w, h) => {
     ctx.fillStyle = css(p.paper)
@@ -218,7 +185,7 @@ export function paintCalendar(p: Palette): Painter {
     const cell = (w * 0.86) / columns
     const top = h * 0.3
     const rowHeight = (h * 0.64) / rows
-    ctx.strokeStyle = css(p.ink, 0.18)
+    ctx.strokeStyle = css(p.screenBezel, 0.18)
     ctx.lineWidth = 1
     for (let c = 0; c <= columns; c += 1) {
       ctx.beginPath()
@@ -232,7 +199,7 @@ export function paintCalendar(p: Palette): Painter {
       ctx.lineTo(w * 0.93, top + r * rowHeight)
       ctx.stroke()
     }
-    ctx.fillStyle = css(p.ink, 0.5)
+    ctx.fillStyle = css(p.screenBezel, 0.5)
     for (let r = 0; r < rows; r += 1) {
       for (let c = 0; c < columns; c += 1) {
         if ((r === 0 && c < 2) || (r === 4 && c > 3)) continue
@@ -247,7 +214,6 @@ export function paintCalendar(p: Palette): Painter {
   }
 }
 
-/** The sky outside the windows: day or dusk, clouds, the sea, a sail. */
 export function paintSky(p: Palette): Painter {
   return (ctx, w, h) => {
     const random = seeded(23)
@@ -263,7 +229,6 @@ export function paintSky(p: Palette): Painter {
     ctx.fillStyle = sea
     ctx.fillRect(0, horizon, w, h - horizon)
     if (p.dark) {
-      // Stars, and a moon.
       ctx.fillStyle = css(p.white, 0.85)
       for (let star = 0; star < 28; star += 1) {
         const size = 0.6 + random() * 1.2
@@ -277,14 +242,12 @@ export function paintSky(p: Palette): Painter {
       ctx.beginPath()
       ctx.arc(w * 0.765, h * 0.185, w * 0.05, 0, Math.PI * 2)
       ctx.fill()
-      // The moon's path on the water.
       ctx.fillStyle = css(p.white, 0.12)
       for (let ripple = 0; ripple < 7; ripple += 1) {
         const ry = horizon + 6 + ripple * 9
         ctx.fillRect(w * 0.74 - 6 - ripple * 2, ry, 12 + ripple * 4, 2)
       }
     } else {
-      // The sun, low and to the left, and its glare on the water.
       const glow = ctx.createRadialGradient(w * 0.22, h * 0.22, 2, w * 0.22, h * 0.22, w * 0.3)
       glow.addColorStop(0, css(p.white, 0.9))
       glow.addColorStop(0.18, css(mix(p.white, p.warm, 0.3), 0.55))
@@ -297,7 +260,6 @@ export function paintSky(p: Palette): Painter {
         ctx.fillRect(w * 0.22 - 5 - ripple * 3, ry, 10 + ripple * 6, 2)
       }
     }
-    // Clouds: soft, flat-bottomed heaps.
     const cloud = css(p.cloud, p.dark ? 0.55 : 0.92)
     const heaps: readonly [number, number, number][] = [[0.18, 0.36, 0.11], [0.62, 0.24, 0.14], [0.88, 0.42, 0.08]]
     for (const [cx, cy, r] of heaps) {
@@ -314,7 +276,6 @@ export function paintSky(p: Palette): Painter {
       ctx.fillStyle = cloud
       ctx.fillRect(x - size * 0.9, y + size * 0.3, size * 1.95, size * 0.32)
     }
-    // A distant shore on the horizon, and a sail.
     ctx.fillStyle = css(mix(p.sea, p.ink, 0.35), 0.5)
     ctx.beginPath()
     ctx.moveTo(w * 0.7, horizon)
@@ -336,14 +297,13 @@ export function paintSky(p: Palette): Painter {
   }
 }
 
-/** A sheet of paper with a few lines of text on it. */
 export function paintPaper(p: Palette): Painter {
   return (ctx, w, h) => {
     ctx.fillStyle = css(p.paper)
     ctx.fillRect(0, 0, w, h)
-    ctx.fillStyle = css(p.ink, 0.42)
+    ctx.fillStyle = css(p.screenBezel, 0.42)
     ctx.fillRect(w * 0.12, h * 0.12, w * 0.5, h * 0.05)
-    ctx.fillStyle = css(p.ink, 0.22)
+    ctx.fillStyle = css(p.screenBezel, 0.22)
     const lines = [0.78, 0.7, 0.74, 0.5, 0.76, 0.66, 0.3]
     lines.forEach((length, index) => {
       ctx.fillRect(w * 0.12, h * (0.26 + index * 0.09), w * length, h * 0.03)
@@ -351,7 +311,6 @@ export function paintPaper(p: Palette): Painter {
   }
 }
 
-/** The face of the wall clock, stopped at ten past ten, like every clock in every photograph. */
 export function paintClock(p: Palette): Painter {
   return (ctx, w, h) => {
     const cx = w / 2
@@ -361,7 +320,7 @@ export function paintClock(p: Palette): Painter {
     ctx.beginPath()
     ctx.arc(cx, cy, r, 0, Math.PI * 2)
     ctx.fill()
-    ctx.strokeStyle = css(p.ink, 0.75)
+    ctx.strokeStyle = css(p.screenBezel, 0.75)
     ctx.lineCap = 'round'
     for (let tick = 0; tick < 12; tick += 1) {
       const angle = (tick / 12) * Math.PI * 2
@@ -380,17 +339,16 @@ export function paintClock(p: Palette): Painter {
       ctx.lineTo(cx + Math.cos(angle) * r * length, cy + Math.sin(angle) * r * length)
       ctx.stroke()
     }
-    hand(-Math.PI / 2 + (10 / 12) * Math.PI * 2 + (10 / 60) * (Math.PI / 6), 0.5, 4, css(p.ink))
-    hand(-Math.PI / 2 + (10 / 60) * Math.PI * 2, 0.72, 3, css(p.ink))
+    hand(-Math.PI / 2 + (10 / 12) * Math.PI * 2 + (10 / 60) * (Math.PI / 6), 0.5, 4, css(p.screenBezel))
+    hand(-Math.PI / 2 + (10 / 60) * Math.PI * 2, 0.72, 3, css(p.screenBezel))
     hand(-Math.PI / 2 + (37 / 60) * Math.PI * 2, 0.78, 1.2, css(p.error))
-    ctx.fillStyle = css(p.ink)
+    ctx.fillStyle = css(p.screenBezel)
     ctx.beginPath()
     ctx.arc(cx, cy, 3, 0, Math.PI * 2)
     ctx.fill()
   }
 }
 
-/** A keyboard's key field, seen from above. */
 export function paintKeyboard(p: Palette): Painter {
   return (ctx, w, h) => {
     ctx.fillStyle = css(p.plasticDark)
@@ -413,18 +371,13 @@ export function paintKeyboard(p: Palette): Painter {
   }
 }
 
-/**
- * What one screen shows: the preset picture for its app, framed by a window
- * chrome, dimmed when nobody is working at it, dark when it is off.
- */
 export function paintScreen(p: Palette, app: AppKind, state: 'working' | 'reading' | 'off', accent: import('three').Color): Painter {
   return (ctx, w, h) => {
     const lit = state !== 'off'
-    const base = state === 'working' ? p.screenOn : state === 'reading' ? p.screenOff : mix(p.ink, p.hue, 0.15)
+    const base = state === 'working' ? p.screenOn : state === 'reading' ? p.screenOff : p.screenOff
     ctx.fillStyle = css(base)
     ctx.fillRect(0, 0, w, h)
     if (!lit) {
-      // A reflection across dark glass.
       const glare = ctx.createLinearGradient(0, 0, w, h)
       glare.addColorStop(0, css(p.white, 0.1))
       glare.addColorStop(0.5, css(p.white, 0))
@@ -434,7 +387,6 @@ export function paintScreen(p: Palette, app: AppKind, state: 'working' | 'readin
     }
     const dim = state === 'reading' ? 0.7 : 1
     const ink = (alpha: number): string => css(p.ink, alpha * dim)
-    // The window chrome: a title bar with three dots.
     ctx.fillStyle = css(mix(base, p.ink, 0.12))
     ctx.fillRect(0, 0, w, h * 0.12)
     for (const [index, color] of [p.error, p.warm, p.leaf].entries()) {
@@ -508,7 +460,7 @@ export function paintScreen(p: Palette, app: AppKind, state: 'working' | 'readin
       }
       case 'term':
       default: {
-        ctx.fillStyle = css(mix(p.ink, p.hue, 0.1))
+        ctx.fillStyle = css(p.screenBezel)
         ctx.fillRect(0, top, w, body)
         bar(w * 0.06, top + body * 0.1, w * 0.5, body * 0.06, css(p.leaf, dim))
         bar(w * 0.06, top + body * 0.26, w * 0.78, body * 0.06, css(p.white, 0.7 * dim))
@@ -518,7 +470,6 @@ export function paintScreen(p: Palette, app: AppKind, state: 'working' | 'readin
         break
       }
     }
-    // The light the room leaves across the glass.
     const glare = ctx.createLinearGradient(0, 0, w * 0.6, h)
     glare.addColorStop(0, css(p.white, 0.14))
     glare.addColorStop(0.45, css(p.white, 0.02))
@@ -528,10 +479,9 @@ export function paintScreen(p: Palette, app: AppKind, state: 'working' | 'readin
   }
 }
 
-/** The treadmill's console: a dark screen with a few bright readouts. */
 export function paintConsole(p: Palette): Painter {
   return (ctx, w, h) => {
-    ctx.fillStyle = css(mix(p.ink, p.hue, 0.1))
+    ctx.fillStyle = css(p.screenBezel)
     ctx.fillRect(0, 0, w, h)
     ctx.fillStyle = css(p.leaf, 0.9)
     ctx.fillRect(w * 0.1, h * 0.25, w * 0.3, h * 0.16)
@@ -544,7 +494,6 @@ export function paintConsole(p: Palette): Painter {
   }
 }
 
-/** The wainscot along the lower walls: vertical wooden slats. Tiles across. */
 export function paintWainscot(p: Palette): Painter {
   return (ctx, w, h) => {
     const random = seeded(31)
@@ -557,41 +506,39 @@ export function paintWainscot(p: Palette): Painter {
       ctx.fillRect(index * slat + 1.5, 0, slat - 3, h)
       ctx.fillStyle = css(p.white, 0.12)
       ctx.fillRect(index * slat + 1.5, 0, 1.5, h)
-      ctx.fillStyle = css(p.ink, 0.22)
+      ctx.fillStyle = css(p.screenBezel, 0.07)
       ctx.fillRect(index * slat, 0, 1.5, h)
     }
   }
 }
 
-/** The soft edge of a light shaft: bright along the window, fading toward the floor and at the sides. */
-export function paintShaft(): Painter {
+export function paintShaft(p: Palette): Painter {
   return (ctx, w, h) => {
     ctx.clearRect(0, 0, w, h)
     const down = ctx.createLinearGradient(0, 0, 0, h)
-    down.addColorStop(0, 'rgba(255,255,255,0.85)')
-    down.addColorStop(0.6, 'rgba(255,255,255,0.35)')
-    down.addColorStop(1, 'rgba(255,255,255,0)')
+    down.addColorStop(0, css(p.white, 0.85))
+    down.addColorStop(0.6, css(p.white, 0.35))
+    down.addColorStop(1, css(p.white, 0))
     ctx.fillStyle = down
     ctx.fillRect(0, 0, w, h)
     ctx.globalCompositeOperation = 'destination-in'
     const across = ctx.createLinearGradient(0, 0, w, 0)
-    across.addColorStop(0, 'rgba(255,255,255,0)')
-    across.addColorStop(0.2, 'rgba(255,255,255,1)')
-    across.addColorStop(0.8, 'rgba(255,255,255,1)')
-    across.addColorStop(1, 'rgba(255,255,255,0)')
+    across.addColorStop(0, css(p.white, 0))
+    across.addColorStop(0.2, css(p.white, 1))
+    across.addColorStop(0.8, css(p.white, 1))
+    across.addColorStop(1, css(p.white, 0))
     ctx.fillStyle = across
     ctx.fillRect(0, 0, w, h)
   }
 }
 
-/** A soft round glow, for a lamp's pool of light and a mote of dust. */
-export function paintGlow(): Painter {
+export function paintGlow(p: Palette): Painter {
   return (ctx, w, h) => {
     ctx.clearRect(0, 0, w, h)
     const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2)
-    g.addColorStop(0, 'rgba(255,255,255,1)')
-    g.addColorStop(0.35, 'rgba(255,255,255,0.55)')
-    g.addColorStop(1, 'rgba(255,255,255,0)')
+    g.addColorStop(0, css(p.white, 1))
+    g.addColorStop(0.35, css(p.white, 0.55))
+    g.addColorStop(1, css(p.white, 0))
     ctx.fillStyle = g
     ctx.fillRect(0, 0, w, h)
   }

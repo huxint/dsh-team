@@ -1,21 +1,10 @@
-/**
- * The office as one scene: the shell, the fixtures, the furniture, the lights,
- * the life, and a workstation per member — built from one palette and rebuilt
- * whenever the theme changes, since every colour and every painted picture in
- * it was mixed from the theme.
- *
- * The stations follow the roster: a member joins, a desk appears; a member's
- * screen changes, its picture is repainted in place. The members themselves
- * are not here — they are the DOM's — but each has a stand-in on the proxy
- * layer, a plane where the member stands, that the depth pass draws first so
- * the furniture in front of a member can be found.
- */
 import {
   AlwaysStencilFunc, Group, Mesh, MeshBasicMaterial, PlaneGeometry, ReplaceStencilOp, Scene, Vector3,
 } from 'three'
 import type { SpriteMark } from '../stagecraft.ts'
 import { toWorld } from '../stagecraft.ts'
 import { buildFixtures } from './fixtures.ts'
+import { batchMeshes } from './batching.ts'
 import { buildLounge, buildTreadmill, buildUtility } from './furniture.ts'
 import { disposeGeometry, PROXY_LAYER, Shop } from './kit.ts'
 import { Life } from './life.ts'
@@ -24,30 +13,26 @@ import type { Palette } from './palette.ts'
 import { buildShell } from './shell.ts'
 import { Station, type StationSpec } from './workstation.ts'
 
-/** How the office is built. */
 export interface OfficeOptions {
-  /** Whether canvas textures are worth painting; off where nothing will render them. */
   readonly paint?: boolean
-  /** Whether the reader asked for no motion. */
   readonly still?: boolean
 }
 
-/** How much wider than a figure its stand-in is, so the stencil covers hood and elbows. */
 const PROXY_WIDTH = 1.0
 
-/** How much taller than the floor-to-hood height of a standing figure the stand-in is. */
 const PROXY_HEIGHT = 1.85
 
-/** The room, as a scene graph. */
 export class Office {
   readonly scene = new Scene()
   palette: Palette
   shop: Shop
+  shadowsDirty = true
   private readonly root = new Group()
   private readonly stations = new Map<string, Station>()
   private specs: readonly StationSpec[] = []
   private life: Life | undefined
   private readonly proxies = new Map<string, Mesh>()
+  // Sprites write depth and stencil only; the foreground pass supplies their occlusion.
   private readonly proxyMaterial = new MeshBasicMaterial({
     colorWrite: false,
     depthWrite: true,
@@ -69,7 +54,6 @@ export class Office {
     this.build()
   }
 
-  /** Paint the whole room again in a new theme. */
   repaint(palette: Palette): void {
     if (palette === this.palette) return
     this.palette = palette
@@ -79,10 +63,6 @@ export class Office {
     this.setStations(this.specs)
   }
 
-  /**
-   * Seat the roster: one station per spec, kept in place where its desk did not
-   * move, rebuilt where it did, and taken away when its owner left the team.
-   */
   setStations(specs: readonly StationSpec[]): void {
     this.specs = specs
     const wanted = new Set(specs.map(spec => spec.id))
@@ -99,18 +79,12 @@ export class Office {
         continue
       }
       held?.dispose()
-      const station = new Station(this.shop, spec)
+      const station = new Station(this.palette, spec, this.paint)
       this.stations.set(spec.id, station)
       this.root.add(station.group)
     }
   }
 
-  /**
-   * Put a stand-in where every member is standing, sized to the figure drawn
-   * there, so the depth pass can tell what is in front of whom.
-   * @param marks - where each member is, by id.
-   * @param eye - where the camera is, so each stand-in faces it.
-   */
   setProxies(marks: ReadonlyMap<string, SpriteMark>, eye: Vector3): void {
     for (const [id, proxy] of this.proxies) {
       if (!marks.has(id)) {
@@ -128,25 +102,26 @@ export class Office {
         this.scene.add(proxy)
       }
       const height = PROXY_HEIGHT * mark.scale
-      const at = toWorld(mark.point, mark.lift + height / 2)
+      const at = toWorld(mark.point, height / 2)
       proxy.position.copy(at)
       proxy.scale.set(PROXY_WIDTH * mark.scale, height, 1)
       proxy.rotation.y = Math.atan2(eye.x - at.x, eye.z - at.z)
     }
   }
 
-  /**
-   * Advance the room's life by so many seconds.
-   * @param seconds - how long since the last step.
-   * @param time - the room's clock, for the screens' breathing.
-   * @returns whether anything moved.
-   */
   step(seconds: number, time: number): boolean {
+    const catWalking = this.life?.catWalking
     let moved = this.life?.step(seconds) ?? false
+    if (catWalking || this.life?.catWalking) this.shadowsDirty = true
     if (!this.still) {
       for (const station of this.stations.values()) moved = station.pulse(time) || moved
     }
     return moved
+  }
+
+  setStencil(enabled: boolean): void {
+    this.shop.setStencil(enabled)
+    for (const station of this.stations.values()) station.shop.setStencil(enabled)
   }
 
   setStill(still: boolean): void {
@@ -154,7 +129,6 @@ export class Office {
     if (this.life !== undefined) this.life.still = still
   }
 
-  /** Free everything. */
   dispose(): void {
     this.tearDown()
     for (const proxy of this.proxies.values()) proxy.removeFromParent()
@@ -164,13 +138,14 @@ export class Office {
   }
 
   private build(): void {
-    this.root.add(buildShell(this.shop))
+    const furniture = [buildShell(this.shop), buildLounge(this.shop), buildUtility(this.shop), buildTreadmill(this.shop)]
+    for (const group of furniture) {
+      batchMeshes(group)
+      this.root.add(group)
+    }
     const fixtures = buildFixtures(this.shop)
     this.root.add(fixtures.group)
-    this.root.add(buildLounge(this.shop))
-    this.root.add(buildUtility(this.shop))
-    this.root.add(buildTreadmill(this.shop))
-    this.root.add(buildLights(this.shop).group)
+    this.root.add(buildLights(this.shop))
     this.life = new Life(this.shop, fixtures.pendants, this.still)
     this.root.add(this.life.group)
   }

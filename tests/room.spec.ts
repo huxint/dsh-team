@@ -127,11 +127,9 @@ describe('walking the floor', () => {
   })
 
   it('takes the straight line when the floor between two places is clear', () => {
-    // Two places on the open floor in front of the desks: nothing stands
-    // between them, so the route is exactly the two ends.
     const obstacles = obstaclesOf(desks(3))
-    const from = { x: 15, y: 60 }
-    const to = { x: 45, y: 60 }
+    const from = { x: 15, y: 91 }
+    const to = { x: 45, y: 91 }
     expect(routeBetween(from, to, obstacles)).toEqual([from, to])
   })
 

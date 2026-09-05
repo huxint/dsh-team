@@ -1,25 +1,11 @@
-/**
- * The agent-team stage: a conversation view tab that draws the team as a room
- * you can look into — every member has a desk of its own with its own computer
- * on it, stands where its live state puts it, and walks the floor to say
- * something to somebody else. The room is the whole tab: while the stage is on
- * screen it holds the composer seat, so nothing is left over the floor; the
- * mailbox, the shared workspace and the task board wait behind a dock of doors
- * on the right edge and open as a glass drawer over the room.
- *
- * Every value it renders is the host's own `team` projection, delivered
- * through the injected store: the browser folds nothing. Geometry comes from
- * the roster alone (no DOM measurement), so the picture is a function of the
- * durable state and nothing else.
- */
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type {} from '@deepseek-ai/dsh-client-ui-session/client'
-import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { } from '@deepseek-ai/dsh-client-ui-session/client'
+import type { } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {
   TeamBoardEntryView, TeamMemberView, TeamMessageView, TeamTaskStatus, TeamTaskView,
 } from '../contract.ts'
@@ -29,48 +15,36 @@ import {
 } from './icons.tsx'
 import {
   breakAt, deskOf, obstaclesOf, poseFor, spread, stationFor, visitAt,
-  type Desk, type Point, type Pose, type Post, type Rect, type Touch,
+  type Desk, type Point, type Pose, type Post, type Touch,
 } from './room.ts'
 import { RoomScene } from './scene/RoomScene.tsx'
-import { project } from './stagecraft.ts'
 import type { StationSpec } from './scene/workstation.ts'
-import type { AppKind } from './scene/textures.ts'
+import { appOf } from './scene/textures.ts'
 import { useIdleErrand, useWalk, type Facing } from './walk.ts'
 import {
   Crew, accentOf, gearOf, hairOf, maskOf, outfitOf, shoeOf, skinOf, toneOf,
 } from './crew.tsx'
 import css from './TeamStage.module.css'
 
-/** What the plugin's session follower publishes to this entry. */
+/** The host’s projected team state; the client does not fold session events. */
 export interface TeamPanelState {
-  /** The session whose log owns the team; absent while no team is in view. */
   readonly leaderId?: string
-  /** The session currently open, so the stage can mark the one you are reading. */
   readonly currentId?: string
   readonly members: readonly TeamMemberView[]
   readonly tasks: readonly TeamTaskView[]
   readonly messages: readonly TeamMessageView[]
-  /** The shared workspace as the leader's log last recorded it. */
   readonly board: readonly TeamBoardEntryView[]
-  /** When that snapshot was taken; absent while the leader has never looked. */
+  /** Time of the leader’s last workspace snapshot. */
   readonly boardAt?: number
 }
 
-/** Navigation and chrome the plugin body owns (it holds the client services). */
 export interface TeamInjected {
-  /** Open one teammate's transcript through its durable parent address. */
   readonly openMember: (leaderId: string, memberId: string) => void
-  /** Return to the leader's own conversation. */
   readonly openLeader: (leaderId: string) => void
-  /**
-   * Take the composer seat for as long as the room is on screen; the returned
-   * disposer hands it back. The room is a picture, not a place you type into,
-   * and the tab is worth more than the strip of window the input card takes.
-   */
+  /** Returns a disposer that restores the composer when this view unmounts. */
   readonly holdComposer?: () => () => void
 }
 
-/** Complete view-tab props: the root kit, the locale, and the inject face. */
 export type TeamStageProps =
   PropsRuntime<'conversation.view'>
   & PropsLocale<'team'>
@@ -79,73 +53,41 @@ export type TeamStageProps =
 
 type Translate = PropsLocale<'team'>['t']
 
-/** How far back the mailbox counts as "this is what the member is doing now". */
 const LIVE_MESSAGES = 4
 
-/** How much of a message one member says out loud while it delivers it. */
 const SPEECH_CHARS = 44
 
-/** How much of a message one log row carries. */
 const LOG_CHARS = 110
 
-/** How much of a message one crew line in the feed carries. */
 const CREW_CHARS = 40
 
-/** How much text one workstation screen carries. */
 const SCREEN_CHARS = 34
 
-/** How much of an unknown session id a ledger shows. */
 const SHORT_ID = 6
 
-/** How long one delivery keeps its carrier away from its own desk. */
 const ERRAND_MS = 9_000
 
-/** The board's columns, left to right. */
 const COLUMNS: readonly TeamTaskStatus[] = ['pending', 'active', 'done']
 
-/** Join the non-empty parts of a meta line. */
 function meta(...parts: (string | undefined)[]): string {
   return parts.filter(part => part !== undefined && part !== '').join(' · ')
 }
 
-/** Wall-clock hh:mm for one mailbox row. */
 function clock(time: number): string {
-  try {
-    return new Date(time).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-  } catch {
-    // Swallows only a RangeError from an out-of-range logged timestamp: a
-    // mailbox row must render even when its clock cannot.
-    return ''
-  }
+  return new Date(time).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
 }
 
-/** The glyph one small avatar carries: the member's first character. */
 function initial(name: string): string {
   return [...name][0]?.toUpperCase() ?? '?'
 }
 
-/** One line of a message, short enough to read where it is shown. */
 function short(text: string, limit: number): string {
   const line = text.replace(/\s+/gu, ' ').trim()
   return [...line].length <= limit ? line : `${[...line].slice(0, limit).join('')}…`
 }
 
-/** Stagger the entry animation of a list without hard-coding per-row CSS. */
-function stagger(index: number): CSSProperties {
-  return { animationDelay: `${Math.min(index, 10) * 30}ms` }
-}
-
-/** The three ledgers waiting behind the dock on the right edge of the room. */
 type PanelId = 'feed' | 'workspace' | 'tasks'
 
-const APPS: readonly AppKind[] = ['code', 'chart', 'doc', 'mail', 'grid', 'term']
-
-function appOf(seat: number): AppKind {
-  return seat < 0 ? 'chart' : APPS[seat % APPS.length] ?? 'code'
-}
-
-/** A member as a tiny portrait: its own mask in its own accent. Memoized: one
- *  feed renders dozens of these, and every prop is a primitive. */
 const Cameo = memo(function Cameo(props: { readonly seat: number | undefined, readonly name: string }) {
   const { seat, name } = props
   if (seat === undefined) return <span className={css.discGlyph}>{initial(name)}</span>
@@ -164,17 +106,9 @@ const Cameo = memo(function Cameo(props: { readonly seat: number | undefined, re
   )
 })
 
-/**
- * The delivery currently being carried across the room. One message keeps its
- * carrier away from its own desk for a while and then lets it walk back: the
- * room shows what just happened, not the whole history at once.
- * @param latest - the newest mailbox row.
- * @returns the row while its errand is running.
- */
 function useVisit(latest: TeamMessageView | undefined): TeamMessageView | undefined {
   const [live, setLive] = useState<string | undefined>(undefined)
-  // A settlement is the runtime's own account of an activation ending; nobody
-  // walks across the room to deliver it.
+  // Settlements describe runtime completion, so they do not start a delivery.
   const id = latest !== undefined && latest.kind !== 'settled' ? latest.messageId : undefined
   useEffect(() => {
     if (id === undefined) return undefined
@@ -185,11 +119,6 @@ function useVisit(latest: TeamMessageView | undefined): TeamMessageView | undefi
   return live !== undefined && live === id ? latest : undefined
 }
 
-/**
- * The team stage. Rendered as one conversation view tab, so it exists only
- * while the surrounding session has a team — an ordinary conversation never
- * grows a tab it cannot fill.
- */
 export function TeamStage(props: TeamStageProps) {
   const state = props.useTeam(snapshot => snapshot)
   const { leaderId, members } = state
@@ -210,12 +139,11 @@ export function TeamStage(props: TeamStageProps) {
 function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { leaderId: string } }) {
   const { state, useSessions, openMember, openLeader, t } = props
   const screenPrefix = useId()
-  // Only the per-session running bits are read, so only they are subscribed
-  // to: a current-session switch elsewhere in the list re-renders nobody here.
+  const drawerId = useId()
+  const dock = useRef<HTMLElement>(null)
+  const closeButton = useRef<HTMLButtonElement>(null)
   const sessionsById = useSessions((snapshot: SessionListState) => snapshot.byId)
-  /** The member the pointer is over, anywhere on the stage. */
   const [focus, setFocus] = useState<string | undefined>(undefined)
-  /** Which ledger the drawer is showing; the room stands alone by default. */
   const [panel, setPanel] = useState<PanelId | undefined>(undefined)
 
   const { leaderId, currentId, members, tasks, messages, board, boardAt } = state
@@ -229,7 +157,6 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
     [members, sessionsById],
   )
 
-  /** The last thing the visible mailbox tail says about each member. */
   const touched = useMemo(() => {
     const out = new Map<string, Touch>()
     for (const message of messages.slice(-LIVE_MESSAGES)) {
@@ -239,12 +166,7 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
     return out
   }, [messages])
 
-  /**
-   * Mail counted as read: the newest delivery that had arrived when the feed
-   * was last open — its identity, not the count, because a bounded feed stops
-   * growing exactly when the mail keeps coming, and so does a team switch,
-   * which starts the next team from a clean slate.
-   */
+  // Bounded feeds replace old rows; the newest message ID remains a reliable unread marker.
   const seen = useRef<{ readonly leader: string | undefined; readonly id: string | undefined }>(
     { leader: undefined, id: undefined },
   )
@@ -258,22 +180,13 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
     && lastId !== undefined
     && lastId !== seen.current.id
 
-
-  /**
-   * The room's whole plan — cast, seating, standing places, and the per-member
-   * reads the ledgers share — derived once per change of the facts it reads
-   * instead of once per render: the stage re-renders on every hover, and every
-   * consumer below holds one of these maps rather than recomputing them.
-   */
+  // Hover changes focus frequently; keep roster geometry and task lookups stable.
   const plan = useMemo(() => {
     const names = new Map<string, string>([[leaderId, t('member.leader')]])
     for (const member of members) names.set(member.memberId, member.name)
-    /** Roster seat per member id, so the ledgers can draw the same cast. */
     const seats = new Map<string, number>([[leaderId, -1]])
     members.forEach((member, index) => seats.set(member.memberId, index))
 
-    // Open work per member, counted once: every tile, screen and crew line
-    // reads this, and it used to be a full task scan per read.
     const openCounts = new Map<string, number>()
     for (const task of tasks) {
       if (task.status === 'done' || task.assigneeId === undefined) continue
@@ -281,14 +194,10 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
     }
     const openOf = (memberId: string): number => openCounts.get(memberId) ?? 0
 
-    // The leader takes the first desk and every teammate the next, in roster
-    // order — a member keeps the same desk for as long as it is on the team.
     const roster = [leaderId, ...members.map(member => member.memberId)]
     const desks = new Map<string, Desk>(roster.map((id, index) => [id, deskOf(index, roster.length)]))
 
-    /** Where each member is standing right now: its own desk, or the break corner. */
     const homes = new Map<string, Post>()
-    /** Who is away from its own desk, so the desk can be drawn empty. */
     const away = new Set<string>()
     const stations: Post[] = []
     let breaks = 0
@@ -300,15 +209,12 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
       if (station === 'break') away.add(id)
       stations.push(station === 'break' ? breakAt(breaks++) : desk)
     }
-    // Four members on a break share three places to stand around the sofa; one
-    // pass of separation keeps the fourth beside the first rather than inside it.
     const parted = spread(stations)
     roster.forEach((id, index) => {
       const post = stations[index]!
       homes.set(id, { ...post, ...parted[index]! })
     })
 
-    /** What one member's monitor shows: its active task, or the last thing said to it. */
     const lines = new Map<string, string>()
     for (const id of roster) {
       const active = tasks.find(task => task.assigneeId === id && task.status === 'active')
@@ -317,8 +223,6 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
         lines.set(id, short(active.title, SCREEN_CHARS))
         continue
       }
-      // Scanned backwards in place: a copy-and-reverse per member is the one
-      // cost this stage does not need to pay on every snapshot.
       for (let index = messages.length - 1; index >= 0; index -= 1) {
         const message = messages[index]
         if (message?.to === id) {
@@ -336,11 +240,9 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
   const openTasks = tasks.filter(task => task.status !== 'done').length
   const leaderRunning = sessionsById[leaderId as SessionId]?.running === true
 
-  /** The delivery on its feet: who carries it, to whom, and where they meet. */
   const errand = useMemo(() => errandOf(visit, leaderId, homes), [visit, leaderId, homes])
   const visitOf = (id: string): Point | undefined =>
     errand !== undefined && errand.fromId === id ? errand.meet : undefined
-  /** Which way the two ends of a delivery turn while they talk. */
   const turnOf = (id: string): Facing | undefined => {
     if (errand === undefined) return undefined
     if (errand.fromId === id) return errand.meet.x < errand.host.x ? 'right' : 'left'
@@ -348,11 +250,21 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
     return undefined
   }
 
-  const toggle = (id: PanelId): void => { setPanel(current => current === id ? undefined : id) }
+  const closePanel = (): void => {
+    dock.current?.querySelector<HTMLButtonElement>(`[data-panel-id="${panel}"]`)?.focus()
+    setFocus(undefined)
+    setPanel(undefined)
+  }
+  const toggle = (id: PanelId): void => {
+    setFocus(undefined)
+    setPanel(current => current === id ? undefined : id)
+  }
+  useEffect(() => {
+    if (panel !== undefined) closeButton.current?.focus({ preventScroll: true })
+  }, [panel])
   const titleOf = (id: PanelId): string =>
     id === 'feed' ? t('stage.feed') : id === 'workspace' ? t('stage.workspace') : t('stage.board')
 
-  /** One stable opener for every tile: the tiles are memoized on their props. */
   const open = useCallback((id: string): void => {
     if (id === leaderId) openLeader(leaderId)
     else openMember(leaderId, id)
@@ -418,37 +330,37 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
   return (
     <div className={css.stage} data-agent-team-stage onKeyDown={event => {
       if (event.key !== 'Escape' || panel === undefined) return
-      event.currentTarget.querySelector<HTMLButtonElement>(`[data-panel-id="${panel}"]`)?.focus()
-      setPanel(undefined)
+      closePanel()
     }}>
       <header className={css.bar}>
-        <span className={css.barTitle}>
-          <IconTeam16 size={15} className={css.barIcon} />
-          {t('stage.title')}
-        </span>
+        <div className={css.brand}>
+          <span className={css.brandMark} aria-hidden><IconTeam16 size={22} /></span>
+          <div>
+            <span className={css.eyebrow}>{t('stage.eyebrow')}</span>
+            <h2 className={css.barTitle}>{t('stage.title')}</h2>
+          </div>
+        </div>
         <span className={css.barHint} title={peers.length > 1 ? t('stage.peerRing') : t('stage.roomHint')}>
-          <IconTeamPeer16 size={13} />
-          <span className={css.barHintText}>{peers.length > 1 ? t('stage.peerRing') : t('stage.roomHint')}</span>
+          <IconTeamPeer16 size={14} />
+          <span>{peers.length > 1 ? t('stage.peerRing') : t('stage.roomHint')}</span>
         </span>
-        <span className={css.barStats}>
-          <span className={css.stat}>{t('stage.members', { count: members.length + 1 })}</span>
-          <span className={`${css.stat} ${running.size > 0 ? css.statLive : ''}`}>
-            {running.size > 0 ? t('stage.running', { count: running.size }) : t('stage.idle')}
+        <div className={css.barStats}>
+          <span className={css.stat}><IconTeam16 size={13} />{t('stage.members', { count: members.length + 1 })}</span>
+          <span className={`${css.stat} ${running.size > 0 || leaderRunning ? css.statLive : ''}`}>
+            <span className={css.statDot} aria-hidden />
+            {running.size > 0 || leaderRunning ? t('stage.running', { count: running.size + Number(leaderRunning) }) : t('stage.idle')}
           </span>
           {tasks.length > 0 && (
-            <span className={css.stat}>{t('stage.tasks', { open: openTasks, total: tasks.length })}</span>
+            <span className={css.stat}><IconTeamTask16 size={13} />{t('stage.tasks', { open: openTasks, total: tasks.length })}</span>
           )}
-        </span>
+        </div>
       </header>
 
       <div className={css.scene}>
-        <RoomScene label={t('stage.room')} stations={stations}>
+        <RoomScene label={t('stage.room')} hint={t('stage.sceneHint')} fallbackLabel={t('stage.rosterView')} stations={stations}>
           <div className={css.screenDescriptions}>
             {stations.map(station => (
-              <span key={station.id} data-desk={station.id} data-screen={station.screen} data-empty={station.empty ? 'true' : undefined} style={{ left: `${project(station.desk).left}%`, top: `${project(station.desk).top}%` }}>
-                <span data-prop="monitor" />
-                <span data-prop="keyboard" />
-                <span data-prop="mug" />
+              <span key={station.id} data-desk={station.id} data-screen={station.screen} data-empty={station.empty ? 'true' : undefined}>
                 <span id={`${screenPrefix}-${station.id}`} data-app={station.app}>
                   {lines.get(station.id) ?? t(station.screen === 'working' ? 'screen.working' : 'status.idle')}
                 </span>
@@ -456,15 +368,11 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
             ))}
           </div>
           {roster.map((id, index) => tileOf(id, index - 1, members[index - 1]))}
-          <div className={css.semanticFurniture} aria-hidden>
-            {['window', 'whiteboard', 'clock', 'shelf', 'calendar', 'ac', 'sofa', 'table', 'plant', 'cooler', 'rug', 'treadmill', 'cabinet', 'printer', 'coffee', 'cat'].map(prop => (
-              <span key={prop} data-prop={prop} />
-            ))}
-          </div>
         </RoomScene>
 
-        <nav className={css.dock} aria-label={t('stage.dock')}>
+        <nav ref={dock} className={css.dock} aria-label={t('stage.dock')}>
           <DockButton
+            controls={drawerId}
             id="feed"
             label={t('stage.feed')}
             count={messages.length}
@@ -475,6 +383,7 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
             <IconTeamMailbox16 size={15} />
           </DockButton>
           <DockButton
+            controls={drawerId}
             id="workspace"
             label={t('stage.workspace')}
             count={board.length}
@@ -485,6 +394,7 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
             <IconTeamWorkspace16 size={15} />
           </DockButton>
           <DockButton
+            controls={drawerId}
             id="tasks"
             label={t('stage.board')}
             count={openTasks}
@@ -497,26 +407,30 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
         </nav>
 
         {panel !== undefined && (
-          <aside className={css.drawer} data-panel={panel} aria-label={titleOf(panel)}>
+          <aside id={drawerId} className={css.drawer} data-panel={panel} aria-label={titleOf(panel)}>
             <header className={css.drawerHead}>
-              <h3 className={css.paneTitle}>
-                {panel === 'feed' && <IconTeamMailbox16 size={13} />}
-                {panel === 'workspace' && <IconTeamWorkspace16 size={13} />}
-                {panel === 'tasks' && <IconTeamTask16 size={13} />}
-                {titleOf(panel)}
-                {panel === 'workspace' && boardAt !== undefined && (
-                  <span className={css.paneNote} title={t('stage.boardStale')}>
-                    {t('stage.boardAt', { time: clock(boardAt) })}
-                  </span>
-                )}
-              </h3>
+              <div className={css.drawerHeading}>
+                <h3 className={css.paneTitle}>
+                  {panel === 'feed' && <IconTeamMailbox16 size={13} />}
+                  {panel === 'workspace' && <IconTeamWorkspace16 size={13} />}
+                  {panel === 'tasks' && <IconTeamTask16 size={13} />}
+                  {titleOf(panel)}
+                  {panel === 'workspace' && boardAt !== undefined && (
+                    <span className={css.paneNote} title={t('stage.boardStale')}>
+                      {t('stage.boardAt', { time: clock(boardAt) })}
+                    </span>
+                  )}
+                </h3>
+                <p className={css.paneHint}>{t(panel === 'feed' ? 'drawer.feedHint' : panel === 'workspace' ? 'drawer.workspaceHint' : 'drawer.tasksHint')}</p>
+              </div>
               <button
+                ref={closeButton}
                 type="button"
                 className={css.drawerClose}
-                onClick={() => { setPanel(undefined) }}
+                onClick={closePanel}
                 aria-label={t('drawer.close')}
               >
-                ×
+                <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden><path d="m4 4 8 8M12 4l-8 8" /></svg>
               </button>
             </header>
             <div className={css.drawerBody}>
@@ -548,11 +462,10 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
                   )
                   : (
                     <div className={css.notes}>
-                      {board.map((entry, index) => (
+                      {board.map(entry => (
                         <NoteCard
                           key={entry.key}
                           entry={entry}
-                          index={index}
                           seats={seats}
                           focused={focus === entry.authorId}
                           onFocus={setFocus}
@@ -589,9 +502,9 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
   )
 }
 
-/** One door on the dock: an icon, a count of what waits behind it, a pulse for news. */
 function DockButton(props: {
   readonly id: PanelId
+  readonly controls: string
   readonly label: string
   readonly count: number
   readonly active: boolean
@@ -599,7 +512,7 @@ function DockButton(props: {
   readonly onToggle: (id: PanelId) => void
   readonly children: ReactNode
 }) {
-  const { id, label, count, active, fresh, onToggle, children } = props
+  const { id, controls, label, count, active, fresh, onToggle, children } = props
   return (
     <button
       type="button"
@@ -608,31 +521,26 @@ function DockButton(props: {
       title={label}
       aria-pressed={active}
       aria-expanded={active}
+      aria-controls={active ? controls : undefined}
       data-panel-id={id}
       data-fresh={fresh ? 'true' : undefined}
       onClick={() => { onToggle(id) }}
     >
-      {children}
+      <span className={css.dockIcon}>{children}</span>
+      <span className={css.dockLabel}>{label}</span>
       {count > 0 && <span className={css.dockCount}>{count > 99 ? '99+' : count}</span>}
     </button>
   )
 }
 
-/** One delivery being carried across the room. */
 interface Errand {
   readonly message: TeamMessageView
   readonly fromId: string
   readonly toId: string
-  /** Where the recipient is standing. */
   readonly host: Post
-  /** Where the carrier stops to talk. */
   readonly meet: Point
 }
 
-/**
- * The delivery in flight as an errand between two members. Absent when either
- * end is off the roster (a dismissed sender) or when nobody had to move.
- */
 function errandOf(
   message: TeamMessageView | undefined,
   leaderId: string,
@@ -647,20 +555,13 @@ function errandOf(
   return { message, fromId, toId, host, meet: visitAt(host, from.x) }
 }
 
-/**
- * One member of the team, standing — or walking — where its own state puts it.
- * Memoized: the room re-renders whenever the pointer moves, and only the tile
- * under the pointer (or the one it left) has actually changed.
- */
 const MemberTile = memo(function MemberTile(props: {
   readonly id: string
   readonly name: string
   readonly screenId: string
   readonly seat: number
   readonly home: Post
-  /** Where a delivery has called it away to, while one is in flight. */
   readonly errand: Point | undefined
-  /** How many members the room seats, so the tile knows the furniture. */
   readonly count: number
   readonly scale: number
   readonly relation: 'peer' | 'managed' | 'lead'
@@ -668,7 +569,6 @@ const MemberTile = memo(function MemberTile(props: {
   readonly current: boolean
   readonly running: boolean
   readonly pose: Pose
-  /** Whether the member is away from its own desk. */
   readonly away: boolean
   readonly focused: boolean
   readonly talking: 'from' | 'to' | undefined
@@ -685,15 +585,11 @@ const MemberTile = memo(function MemberTile(props: {
     id, name, screenId, seat, home, errand, count, scale, relation, role, current, running, pose, away,
     focused, talking, turn, speech, tasks, label, title, onOpen, onFocus, t,
   } = props
-  // The furniture only changes when the roster does, and the walk hook keys its
-  // frame loop on this list: rebuilding it every render would restart the trip.
   const obstacles = useMemo(
     () => obstaclesOf(Array.from({ length: count }, (_, index) => deskOf(index, count))),
     [count],
   )
-  // Somebody with nothing on their plate and nowhere to be drifts off now and
-  // then. A delivery outranks a daydream, and the leader keeps its seat — the
-  // first desk is the room's anchor, and a wandering host is a dropped mail.
+  // The leader stays at its desk so deliveries have a stationary destination.
   const loose = seat >= 0 && pose === 'idle' && errand === undefined && talking === undefined
   const wander = useIdleErrand(seat, loose)
   const spot: Point = errand ?? (loose ? wander ?? home : home)
@@ -701,8 +597,6 @@ const MemberTile = memo(function MemberTile(props: {
   const mask = maskOf(seat)
   const outfit = outfitOf(seat)
   const shoes = shoeOf(seat)
-  // At its own desk a member faces its own computer, so you see it from
-  // behind; on its feet or away from its desk it turns back around.
   const seated = !walk.walking && !away && talking === undefined && wander === undefined
   const facing = walk.walking ? walk.facing : turn ?? (seated ? 'back' : 'front')
   const relationLabel = relation === 'lead'
@@ -713,10 +607,7 @@ const MemberTile = memo(function MemberTile(props: {
       type="button"
       ref={walk.ref}
       className={css.person}
-      style={{
-        ...accentOf(seat),
-        ...stagger(seat + 1),
-      }}
+      style={accentOf(seat)}
       onClick={() => { onOpen(id) }}
       onMouseEnter={() => { onFocus(id) }}
       onMouseLeave={() => { onFocus(undefined) }}
@@ -760,23 +651,24 @@ const MemberTile = memo(function MemberTile(props: {
             <IconTeamLeader16 size={12} />
           </span>
         )}
-        {tasks > 0 && <span className={css.load}>{tasks}</span>}
+        {tasks > 0 && <span className={css.load} title={t('feed.open', { count: tasks })}>{tasks}</span>}
       </span>
 
       <span className={css.plate}>
-        <span className={css.plateName}>{name}</span>
+        <span className={css.plateName}>
+          <span className={css.state} title={t(running ? 'status.running' : 'status.idle')}>
+            <StateDot state={running ? 'ongoing' : 'done'} size={7} />
+          </span>
+          <span className={css.plateText}>{name}</span>
+        </span>
         {(role !== undefined || relationLabel !== undefined) && (
           <span className={css.plateMeta}>{meta(role, relationLabel)}</span>
         )}
-      </span>
-      <span className={css.state} title={t(running ? 'status.running' : 'status.idle')}>
-        <StateDot state={running ? 'ongoing' : 'done'} size={6} />
       </span>
     </button>
   )
 })
 
-/** One member's line in the roster strip: what it is doing, and its latest word. */
 interface CrewRow {
   readonly id: string
   readonly name: string
@@ -785,13 +677,6 @@ interface CrewRow {
   readonly open: number
 }
 
-/**
- * The mailbox, as a log rather than a chat: a roster strip that keeps one
- * refreshed line per member — the newest thing it said or was told, truncated
- * so a long turn cannot push the room's cast off the pane — over the traffic
- * itself, newest last. Every member of the team writes on the same side; the
- * right-hand side belongs to the reader, and the reader does not post here.
- */
 function MessageFeed(props: {
   readonly roster: readonly CrewRow[]
   readonly messages: readonly TeamMessageView[]
@@ -806,8 +691,6 @@ function MessageFeed(props: {
   const scroller = useRef<HTMLDivElement>(null)
   const lastId = messages.length > 0 ? messages[messages.length - 1]!.messageId : undefined
 
-  // The newest traffic naming each member, and which way it went — scanned
-  // once per mailbox change rather than once per crew row per render.
   const latestOf = useMemo(() => {
     const out = new Map<string, { readonly text: string, readonly way: 'got' | 'sent' }>()
     for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -823,10 +706,7 @@ function MessageFeed(props: {
     return out
   }, [messages])
 
-  // A new delivery is the point of the log: keep the newest row in view.
-  // Keyed on the newest row's identity, not the count — a bounded feed
-  // replaces its oldest row once full, and the count stops moving exactly
-  // when the mail keeps coming.
+  // Identity changes even when a full mailbox replaces a row without growing.
   useEffect(() => {
     const node = scroller.current
     if (node !== null) node.scrollTop = node.scrollHeight
@@ -834,6 +714,7 @@ function MessageFeed(props: {
 
   return (
     <div className={css.feed}>
+      <h4 className={css.feedTitle}>{t('feed.crew')}<span>{roster.length}</span></h4>
       <div className={css.crewList} aria-label={t('feed.crew')}>
         {roster.map(row => {
           const latest = latestOf.get(row.id)
@@ -869,13 +750,12 @@ function MessageFeed(props: {
         ? <p className={css.empty}>{t('stage.noMessages')}</p>
         : (
           <div className={css.log} ref={scroller}>
-            {messages.map((message, index) => {
+            {messages.map(message => {
               const partner = message.from ?? message.to
               return (
                 <LogRow
                   key={message.messageId}
                   message={message}
-                  index={index}
                   names={names}
                   seats={seats}
                   leaderLabel={leaderLabel}
@@ -891,19 +771,16 @@ function MessageFeed(props: {
   )
 }
 
-/** One row of the log: who said what to whom, on one line, cut to fit. Memoized
- *  so a hover re-renders the row it lit and the row it unlit, nothing else. */
 const LogRow = memo(function LogRow(props: {
   readonly message: TeamMessageView
-  readonly index: number
-  readonly names: ReadonlyMap<string, string>
+    readonly names: ReadonlyMap<string, string>
   readonly seats: ReadonlyMap<string, number>
   readonly leaderLabel: string
   readonly focused: boolean
   readonly onFocus: (memberId: string | undefined) => void
   readonly t: Translate
 }) {
-  const { message, index, names, seats, leaderLabel, focused, onFocus, t } = props
+  const { message, names, seats, leaderLabel, focused, onFocus, t } = props
   const label = (id: string | undefined): string =>
     id === undefined ? leaderLabel : names.get(id) ?? id.slice(0, SHORT_ID)
   const partner = message.from ?? message.to
@@ -914,7 +791,6 @@ const LogRow = memo(function LogRow(props: {
       data-message-kind={message.kind}
       data-hop={message.hop === undefined ? undefined : String(message.hop)}
       data-focus={focused ? 'true' : undefined}
-      style={stagger(index)}
       onMouseEnter={() => { onFocus(partner) }}
       onMouseLeave={() => { onFocus(undefined) }}
     >
@@ -947,22 +823,18 @@ const LogRow = memo(function LogRow(props: {
   )
 })
 
-/** One note pinned to the shared workspace, as the leader last saw it. Memoized
- *  like the log rows: a hover re-renders only the note it lit. */
 const NoteCard = memo(function NoteCard(props: {
   readonly entry: TeamBoardEntryView
-  readonly index: number
-  readonly seats: ReadonlyMap<string, number>
+    readonly seats: ReadonlyMap<string, number>
   readonly focused: boolean
   readonly onFocus: (memberId: string | undefined) => void
 }) {
-  const { entry, index, seats, focused, onFocus } = props
+  const { entry, seats, focused, onFocus } = props
   return (
     <div
       className={css.note}
       data-note-key={entry.key}
       data-focus={focused ? 'true' : undefined}
-      style={stagger(index)}
       onMouseEnter={() => { onFocus(entry.authorId) }}
       onMouseLeave={() => { onFocus(undefined) }}
     >
@@ -981,7 +853,6 @@ const NoteCard = memo(function NoteCard(props: {
   )
 })
 
-/** One lane of the shared task board. */
 function TaskColumn(props: {
   readonly status: TeamTaskStatus
   readonly tasks: readonly TeamTaskView[]
@@ -999,14 +870,13 @@ function TaskColumn(props: {
         {title}
         <span className={css.columnCount}>{tasks.length}</span>
       </h4>
-      {tasks.map((task, index) => (
+      {tasks.map(task => (
         <div
           key={task.taskId}
           className={css.card}
           data-task-status={task.status}
           data-focus={task.assigneeId !== undefined && focus === task.assigneeId ? 'true' : undefined}
-          style={stagger(index)}
-          onMouseEnter={() => { onFocus(task.assigneeId) }}
+              onMouseEnter={() => { onFocus(task.assigneeId) }}
           onMouseLeave={() => { onFocus(undefined) }}
         >
           <span className={css.cardTitle} title={task.title}>{task.title}</span>

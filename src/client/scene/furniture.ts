@@ -1,10 +1,3 @@
-/**
- * The standing furniture: the break corner, the service wall and the treadmill.
- *
- * Every piece is placed by its OWN plan rectangle — the same rectangle a walk
- * goes around — so the furniture it is drawn as and the furniture it is walked
- * around as are the same furniture, and nothing can creep off the floor.
- */
 import { Group, Vector3 } from 'three'
 import { BLOCKS, type Rect } from '../room.ts'
 import { ROOM } from '../stagecraft.ts'
@@ -12,7 +5,6 @@ import { plant } from './flora.ts'
 import { box, capsule, cylinder, lathe, named, plane, ring, rounded, sphere, type Shop } from './kit.ts'
 import { paintConsole, paintPaper, paintRug } from './textures.ts'
 
-/** Where one plan rectangle lands in the world: its centre on the floor, and its size. */
 export function spotOf(rect: Rect): { readonly x: number, readonly z: number, readonly w: number, readonly d: number } {
   return {
     x: ((rect.x + rect.w / 2 - 50) / 100) * ROOM.width,
@@ -22,16 +14,13 @@ export function spotOf(rect: Rect): { readonly x: number, readonly z: number, re
   }
 }
 
-/** The rug is furniture nobody walks around, so it has a rectangle of its own. */
 export const RUG: Rect = { x: 70, y: 39.5, w: 22.5, h: 20 }
 
-/** Where the floor lamp's bulb is, for the evening light. */
 export function lampBulb(): Vector3 {
   const at = spotOf(BLOCKS.lamp)
   return new Vector3(at.x, 1.42, at.z)
 }
 
-/** The break corner: the rug, the sofa, the low table, the lamp, the plant and the cooler. */
 export function buildLounge(shop: Shop): Group {
   const group = named(new Group(), 'lounge')
   group.add(rug(shop))
@@ -42,22 +31,21 @@ export function buildLounge(shop: Shop): Group {
   const at = spotOf(BLOCKS.plant)
   big.position.set(at.x, 0, at.z)
   big.name = 'plant'
+  group.add(shop.contact(0.8, 0.75, { x: at.x, z: at.z }))
   group.add(big)
   group.add(cooler(shop))
   return group
 }
 
-/** The mat the sofa and the table stand on. */
 function rug(shop: Shop): Group {
   const p = shop.palette
   const at = spotOf(RUG)
   const group = named(new Group(), 'rug')
   const map = shop.texture(512, 384, paintRug(p))
-  group.add(rounded(at.w, 0.02, at.d, 0.01, shop.matte(p.rug, { map, roughness: 1 }), { x: at.x, y: 0.01, z: at.z }, { cast: false }))
+  group.add(rounded(at.w, 0.02, at.d, 0.01, shop.matte(p.white, { map, roughness: 1 }), { x: at.x, y: 0.01, z: at.z }, { cast: false }))
   return group
 }
 
-/** A two-seater with deep cushions, rounded arms and tapered legs. */
 function sofa(shop: Shop): Group {
   const p = shop.palette
   const at = spotOf(BLOCKS.sofa)
@@ -68,6 +56,7 @@ function sofa(shop: Shop): Group {
   const fabric = shop.matte(p.fabric, { roughness: 1 })
   const dark = shop.matte(p.fabricDark, { roughness: 1 })
   const legs = shop.matte(p.woodDark, { roughness: 0.6 })
+  group.add(shop.contact(width + 0.5, depth + 0.4, { y: 0.03 }))
   group.add(rounded(width, 0.26, depth, 0.05, dark, { y: 0.1 + 0.13 }))
   const cushion = (width - 0.34) / 2
   for (const side of [-1, 1]) {
@@ -80,13 +69,11 @@ function sofa(shop: Shop): Group {
   for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
     group.add(cylinder(0.02, 0.028, 0.1, legs, { x: x * (width / 2 - 0.1), y: 0.05, z: z * (depth / 2 - 0.08) }, 10))
   }
-  // Two throw pillows, leaning on the back.
   group.add(rounded(0.3, 0.3, 0.1, 0.06, shop.matte(p.cushionWarm, { roughness: 1 }), { x: -width / 2 + 0.36, y: 0.6, z: -depth / 2 + 0.28, rz: 0.1, rx: -0.2 }))
   group.add(rounded(0.28, 0.28, 0.1, 0.06, shop.matte(p.cushionCool, { roughness: 1 }), { x: width / 2 - 0.34, y: 0.59, z: -depth / 2 + 0.28, rz: -0.14, rx: -0.2 }))
   return group
 }
 
-/** The low table in front of the sofa, with a magazine and a cup left on it. */
 function table(shop: Shop): Group {
   const p = shop.palette
   const at = spotOf(BLOCKS.table)
@@ -102,7 +89,7 @@ function table(shop: Shop): Group {
   }
   const paper = shop.texture(128, 160, paintPaper(p))
   group.add(box(0.2, 0.008, 0.27, shop.matte(p.accent(4), { roughness: 0.6 }), { x: -width * 0.2, y: height + 0.004, z: 0.02, ry: 0.25 }, { cast: false }))
-  group.add(box(0.17, 0.004, 0.23, shop.matte(p.paper, { map: paper, roughness: 0.9 }), { x: -width * 0.2 + 0.03, y: height + 0.01, z: 0.03, ry: 0.1 }, { cast: false }))
+  group.add(box(0.17, 0.004, 0.23, shop.matte(p.white, { map: paper, roughness: 0.9 }), { x: -width * 0.2 + 0.03, y: height + 0.01, z: 0.03, ry: 0.1 }, { cast: false }))
   const china = shop.matte(p.white, { roughness: 0.3 })
   group.add(cylinder(0.05, 0.05, 0.006, china, { x: width * 0.22, y: height + 0.003, z: 0.04 }, 20, { cast: false }))
   group.add(lathe([[0.025, 0], [0.034, 0.004], [0.038, 0.06], [0.034, 0.064], [0.028, 0.064], [0.025, 0.01]], china, { x: width * 0.22, y: height + 0.006, z: 0.04 }, 18))
@@ -110,7 +97,6 @@ function table(shop: Shop): Group {
   return group
 }
 
-/** A floor lamp at the corner's edge. */
 function lamp(shop: Shop): Group {
   const p = shop.palette
   const at = spotOf(BLOCKS.lamp)
@@ -122,13 +108,12 @@ function lamp(shop: Shop): Group {
   const shade = lathe([[0.17, 0], [0.165, 0.01], [0.12, 0.3], [0.11, 0.31]], shop.matte(p.shade, { roughness: 0.8, doubleSide: true }), { y: 1.28 }, 28, { cast: false })
   group.add(shade)
   group.add(ring(0.11, 0.006, iron, { y: 1.59 }, { cast: false }))
-  const bulb = sphere(0.04, shop.matte(p.bulb, { emissive: p.bulb, emissiveIntensity: 0.4, roughness: 0.3 }), { y: 1.42 }, { cast: false, receive: false })
+  const bulb = sphere(0.04, shop.matte(p.bulb, { emissive: p.bulb, emissiveIntensity: p.dark ? 1.2 : 0.15, roughness: 0.3 }), { y: 1.42 }, { cast: false, receive: false })
   bulb.name = 'bulb'
   group.add(bulb)
   return group
 }
 
-/** The water cooler against the right wall: a cabinet with a jug on top. */
 function cooler(shop: Shop): Group {
   const p = shop.palette
   const at = spotOf(BLOCKS.cooler)
@@ -144,21 +129,30 @@ function cooler(shop: Shop): Group {
   }
   group.add(box(0.26, 0.02, 0.1, shop.matte(p.plasticDark, { roughness: 0.9 }), { y: 0.55, z: 0.17 }, { cast: false }))
   group.add(sphere(0.007, shop.matte(p.leaf, { emissive: p.leaf, emissiveIntensity: 1.2 }), { x: -0.14, y: 0.9, z: 0.2 }, { cast: false }))
-  // The jug: a shell of glass, and the water standing in it.
-  const glass = shop.matte(p.glass, { transparent: true, opacity: 0.35, roughness: 0.15, metalness: 0.1 })
-  group.add(lathe([[0.1, 0], [0.16, 0.05], [0.18, 0.25], [0.16, 0.42], [0.08, 0.5], [0.05, 0.52], [0.05, 0.56]], glass, { y: cabinetHeight }, 24, { cast: false }))
-  group.add(lathe([[0.09, 0], [0.15, 0.05], [0.17, 0.24], [0.15, 0.36], [0, 0.36]], shop.matte(p.hue, { transparent: true, opacity: 0.55, roughness: 0.2 }), { y: cabinetHeight + 0.005 }, 24, { cast: false }))
-  group.add(cylinder(0.055, 0.055, 0.03, shop.matte(p.hue, { roughness: 0.5 }), { y: cabinetHeight + 0.57 }, 16, { cast: false }))
+  const jug = named(new Group(), 'jug')
+  jug.position.y = cabinetHeight
+  const glass = shop.matte(p.glass, { transparent: true, opacity: 0.3, roughness: 0.18, metalness: 0.05 })
+  glass.depthWrite = false
+  jug.add(lathe([
+    [0.048, 0], [0.048, 0.055], [0.058, 0.08], [0.135, 0.13],
+    [0.174, 0.19], [0.18, 0.24], [0.18, 0.46], [0.168, 0.5], [0.145, 0.52], [0, 0.52],
+  ], glass, {}, 28, { cast: false }))
+  jug.add(lathe([
+    [0.042, 0.015], [0.042, 0.055], [0.051, 0.08], [0.128, 0.135],
+    [0.165, 0.2], [0.17, 0.25], [0.17, 0.39], [0, 0.39],
+  ], shop.matte(p.hue, { transparent: true, opacity: 0.5, roughness: 0.2 }), {}, 28, { cast: false }))
+  for (const y of [0.25, 0.43]) jug.add(ring(0.179, 0.005, glass, { y }, { cast: false }))
+  jug.add(cylinder(0.055, 0.06, 0.04, shop.matte(p.hue, { roughness: 0.5 }), { y: 0.02 }, 20, { cast: false }))
+  group.add(cylinder(0.095, 0.105, 0.025, shop.matte(p.plasticDark), { y: cabinetHeight + 0.006 }, 24, { cast: false }))
+  group.add(jug)
   return group
 }
 
-/** The filing cabinet, the printer and the coffee machine along the left wall. */
 export function buildUtility(shop: Shop): Group {
   const p = shop.palette
   const at = spotOf(BLOCKS.utility)
   const group = named(new Group(), 'utility')
   const wallX = -ROOM.width / 2
-  // The cabinet, at the back of the run.
   const cabinet = named(new Group(), 'cabinet')
   cabinet.position.set(wallX + 0.29, 0, at.z - at.d / 2 + 0.3)
   const steel = shop.matte(p.metal, { roughness: 0.5, metalness: 0.3 })
@@ -171,7 +165,6 @@ export function buildUtility(shop: Shop): Group {
   }
   cabinet.add(box(0.3, 0.06, 0.22, shop.matte(p.accent(4), { roughness: 0.8 }), { x: 0.05, y: 1.11, z: 0.05, ry: 0.15 }))
   group.add(cabinet)
-  // The printer on its stand.
   const printer = named(new Group(), 'printer')
   printer.position.set(wallX + 0.3, 0, at.z + 0.02)
   printer.add(box(0.52, 0.68, 0.5, shop.matte(p.wood, { roughness: 0.7 }), { y: 0.34 }))
@@ -179,10 +172,9 @@ export function buildUtility(shop: Shop): Group {
   printer.add(rounded(0.46, 0.2, 0.42, 0.03, shop.matte(p.plastic, { roughness: 0.5 }), { y: 0.78 }))
   printer.add(rounded(0.4, 0.03, 0.34, 0.01, shop.matte(p.plasticDark, { roughness: 0.9 }), { y: 0.895, z: -0.02 }, { cast: false }))
   const sheet = shop.texture(128, 160, paintPaper(p))
-  printer.add(box(0.26, 0.006, 0.2, shop.matte(p.paper, { map: sheet, roughness: 0.9 }), { y: 0.72, z: 0.27, rx: 0.12 }, { cast: false }))
+  printer.add(box(0.26, 0.006, 0.2, shop.matte(p.white, { map: sheet, roughness: 0.9 }), { y: 0.72, z: 0.27, rx: 0.12 }, { cast: false }))
   printer.add(box(0.12, 0.02, 0.004, shop.matte(p.screenBezel, { emissive: p.hue, emissiveIntensity: 0.8 }), { x: 0.12, y: 0.84, z: 0.212 }, { cast: false }))
   group.add(printer)
-  // The coffee machine on its counter, at the front of the run.
   const coffee = named(new Group(), 'coffee')
   coffee.position.set(wallX + 0.29, 0, at.z + at.d / 2 - 0.28)
   coffee.add(box(0.5, 0.86, 0.5, shop.matte(p.woodLight, { roughness: 0.7 }), { y: 0.43 }))
@@ -202,7 +194,6 @@ export function buildUtility(shop: Shop): Group {
   return group
 }
 
-/** The treadmill in the front-right corner, facing the back wall. */
 export function buildTreadmill(shop: Shop): Group {
   const p = shop.palette
   const at = spotOf(BLOCKS.treadmill)
@@ -210,6 +201,7 @@ export function buildTreadmill(shop: Shop): Group {
   group.position.set(at.x, 0, at.z)
   const frame = shop.matte(p.metalDark, { roughness: 0.5, metalness: 0.4 })
   const deckLength = 1.5
+  group.add(shop.contact(1.0, 1.9))
   group.add(rounded(0.7, 0.12, deckLength, 0.04, frame, { y: 0.08 }))
   group.add(box(0.52, 0.012, deckLength - 0.34, shop.matte(p.plasticDark, { roughness: 1 }), { y: 0.146, z: 0.1 }, { cast: false }))
   group.add(rounded(0.7, 0.22, 0.34, 0.06, shop.matte(p.plastic, { roughness: 0.5 }), { y: 0.2, z: -deckLength / 2 + 0.2 }))

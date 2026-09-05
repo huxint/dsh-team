@@ -1,47 +1,19 @@
-/**
- * The room's greenery, grown from the kit.
- *
- * A plant used to be three overlapping gradients, which reads as a green cloud
- * in a pot. These are built the way the furniture is: a thrown pot with a
- * rolled rim, soil, and real leaves — flat cutouts hinged where they join the
- * stem, in three greens so the foliage has a lit side and a shaded one.
- *
- * Every kind shares the same pot and the same frame — the pot stands on the
- * origin, foliage grows up out of it — so a plant can be swapped for another
- * anywhere in the room without moving anything around it.
- */
-import { Color, Group, Mesh, Shape } from 'three'
+import { Color, Group, Shape } from 'three'
 import { capsule, cutout, cylinder, lathe, leafShape, sphere, type Shop } from './kit.ts'
 import { seeded } from './textures.ts'
 
-/** The plants the room keeps, in the order places take them. */
 export const PLANTS = ['monstera', 'sansevieria', 'pothos', 'cactus', 'ficus', 'palm'] as const
 
-/** One kind of plant. */
 export type PlantKind = typeof PLANTS[number]
 
-/**
- * Which plant stands in the nth green spot of the room: stable, so the corner
- * you learned is the corner you come back to.
- * @param index - the spot's index.
- * @returns the kind that stands there.
- */
 export function plantOf(index: number): PlantKind {
   return PLANTS[((index % PLANTS.length) + PLANTS.length) % PLANTS.length] ?? 'monstera'
 }
 
-/** The three greens a plant is painted in, lit to shaded. */
 function greens(shop: Shop): readonly Color[] {
   return [shop.palette.leafLit, shop.palette.leaf, shop.palette.leafDark]
 }
 
-/**
- * A thrown pot: a tapered body, a rolled rim, soil inside and a saucer under.
- * @param shop - where the materials come from.
- * @param radius - the radius at the rim.
- * @param height - how tall it stands.
- * @returns the pot, standing on the origin.
- */
 export function pot(shop: Shop, radius: number, height: number): Group {
   const group = new Group()
   const clay = shop.matte(shop.palette.pot, { roughness: 0.9 })
@@ -60,7 +32,6 @@ export function pot(shop: Shop, radius: number, height: number): Group {
   return group
 }
 
-/** A leaf on a stem: the stem stands from the soil, the leaf tilts off its top. */
 function frond(shop: Shop, shape: Shape, color: Color, at: { x: number, z: number, stem: number, tilt: number, spin: number, roll?: number }): Group {
   const pivot = new Group()
   pivot.position.set(at.x, 0, at.z)
@@ -78,13 +49,6 @@ function frond(shop: Shop, shape: Shape, color: Color, at: { x: number, z: numbe
   return pivot
 }
 
-/**
- * One plant, standing on the origin.
- * @param shop - where the materials come from.
- * @param kind - which plant.
- * @param size - how tall it grows, as a multiple of a knee-high pot plant.
- * @returns the plant.
- */
 export function plant(shop: Shop, kind: PlantKind, size = 1): Group {
   const group = new Group()
   group.name = `plant:${kind}`
@@ -117,7 +81,6 @@ export function plant(shop: Shop, kind: PlantKind, size = 1): Group {
     }
     case 'pothos': {
       group.add(pot(shop, 0.13, 0.2))
-      // A tumble of hearts spilling over the rim on every side.
       for (let index = 0; index < 12; index += 1) {
         const spin = (index / 12) * Math.PI * 2 + random() * 0.3
         const out = 0.1 + random() * 0.12
@@ -134,7 +97,6 @@ export function plant(shop: Shop, kind: PlantKind, size = 1): Group {
       group.add(capsule(0.07, 0.28, skin, { y: 0.2 + 0.2 }))
       group.add(capsule(0.045, 0.1, skin, { x: 0.1, y: 0.42, rz: -0.5 }))
       group.add(capsule(0.045, 0.06, skin, { x: -0.095, y: 0.36, rz: 0.55 }))
-      // Ribs, as darker lines up the body, and one bloom on top.
       const rib = shop.matte(dark!, { roughness: 0.8 })
       for (let index = 0; index < 5; index += 1) {
         const angle = (index / 5) * Math.PI * 2
@@ -176,13 +138,6 @@ export function plant(shop: Shop, kind: PlantKind, size = 1): Group {
   return group
 }
 
-/**
- * A pothos trailing from a hanging pot: the vines fall past the pot and down
- * the wall, hearts hanging point-down the way a trailing leaf does.
- * @param shop - where the materials come from.
- * @param drop - how far the longest vine hangs below the pot.
- * @returns the plant, its pot's bottom on the origin.
- */
 export function trailingPothos(shop: Shop, drop = 0.9): Group {
   const group = new Group()
   group.name = 'plant:pothos'
@@ -207,9 +162,4 @@ export function trailingPothos(shop: Shop, drop = 0.9): Group {
     }
   }
   return group
-}
-
-/** Whether an object is a leaf, for tests that count the greenery. */
-export function isLeaf(object: unknown): object is Mesh {
-  return object instanceof Mesh && object.geometry.type === 'ShapeGeometry'
 }

@@ -1,90 +1,89 @@
 #!/usr/bin/env node
-/**
- * The README screenshot, one command:
- *
- *   node scripts/screenshot/shoot.mjs [out.png]
- *   pnpm run screenshot
- *
- * Builds the harness page with vite (see vite.config.ts), then shoots it in
- * headless Chrome with the theme tokens and the representative mid-flight
- * team snapshot applied by main.tsx — the same room the web shell draws,
- * everything held still by reduced motion so the capture is reproducible.
- * Writes the PNG (default `screenshots/image.png`, the file the README shows).
- */
 import { chromium } from 'playwright-core'
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { createServer } from 'node:http'
-import { readFileSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, extname, join, resolve } from 'node:path'
+import { dirname, extname, join, resolve, sep } from 'node:path'
+import { parseArgs } from 'node:util'
+import { fileURLToPath } from 'node:url'
+import assert from 'node:assert/strict'
 
-const PROOT = resolve(dirname(new URL(import.meta.url).pathname), '..', '..')
-const VITE_BIN = join(dirname(createRequire(import.meta.url).resolve('vite/package.json')), 'bin', 'vite.js')
-const DIST = join(PROOT, '.tmp-screenshot', 'dist')
-const OUT = resolve(process.argv[2] ?? join(PROOT, 'screenshots', 'image.png'))
-const WIDTH = 1500
-const HEIGHT = 760
-
-/** The chrome binaries a runner might carry, in order to try. */
-const CHROME_CANDIDATES = [
-  process.env.CHROME_PATH ?? '',
-  '/usr/bin/google-chrome-stable',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium',
-  '/usr/bin/chromium-browser',
-  '/opt/google/chrome/chrome',
-].filter(Boolean)
-
-// ---- 1. Build the harness page ----
-const built = spawnSync('node', [VITE_BIN, 'build', '--config', 'scripts/screenshot/vite.config.ts', '--logLevel', 'warn'], {
-  cwd: PROOT, encoding: 'utf8',
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
+const vite = join(dirname(createRequire(import.meta.url).resolve('vite/package.json')), 'bin/vite.js')
+const dist = join(root, '.tmp-screenshot/dist')
+const { values, positionals } = parseArgs({
+  allowPositionals: true,
+  options: {
+    theme: { type: 'string', default: 'light' },
+    locale: { type: 'string', default: 'zh' },
+    panel: { type: 'string' },
+    width: { type: 'string', default: '1500' },
+    height: { type: 'string', default: '760' },
+    verify: { type: 'boolean', default: false },
+  },
 })
-if (built.status !== 0) {
-  console.error(built.stderr || built.stdout)
-  process.exit(built.status ?? 1)
-}
+const output = resolve(positionals[0] ?? join(root, 'screenshots/image.png'))
+const viewport = { width: Number(values.width), height: Number(values.height) }
+assert(['light', 'dark'].includes(values.theme), 'theme must be light or dark')
+assert(['zh', 'en'].includes(values.locale), 'locale must be zh or en')
+assert(values.panel === undefined || ['feed', 'workspace', 'tasks'].includes(values.panel), 'unknown panel')
+assert(Object.values(viewport).every(size => Number.isInteger(size) && size >= 240), 'viewport dimensions must be at least 240')
 
-// ---- 2. Serve it ----
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.map': 'application/json' }
-const server = createServer((req, res) => {
-  const url = req.url.split('?')[0]
-  const path = resolve(join(DIST, url === '/' ? 'index.html' : url))
-  if (!path.startsWith(DIST)) { res.writeHead(403); res.end(); return }
+const executablePath = [process.env.CHROME_PATH, '/usr/bin/google-chrome-stable', '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/opt/google/chrome/chrome'].find(path => path && existsSync(path))
+assert(executablePath, 'No Chrome binary found; set CHROME_PATH')
+const built = spawnSync('node', [vite, 'build', '--config', 'scripts/screenshot/vite.config.ts', '--logLevel', 'warn'], { cwd: root, encoding: 'utf8' })
+assert.equal(built.status, 0, built.stderr || built.stdout)
+
+const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' }
+const server = createServer((request, response) => {
+  const pathname = new URL(request.url, 'http://localhost').pathname
+  if (pathname === '/favicon.ico') { response.writeHead(204).end(); return }
+  const path = resolve(dist, `.${pathname === '/' ? '/index.html' : pathname}`)
+  if (!path.startsWith(dist + sep)) { response.writeHead(403).end(); return }
   try {
     const body = readFileSync(path)
-    res.writeHead(200, { 'content-type': MIME[extname(path)] ?? 'application/octet-stream' })
-    res.end(body)
-  } catch {
-    res.writeHead(404); res.end()
+    response.writeHead(200, { 'content-type': mime[extname(path)] ?? 'application/octet-stream' }).end(body)
+  } catch (error) {
+    response.writeHead(error.code === 'ENOENT' ? 404 : 500).end()
   }
 })
-await new Promise(ok => server.listen(0, '127.0.0.1', ok))
-const port = server.address().port
+let browser
+try {
+  await new Promise((ready, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', ready)
+  })
+  browser = await chromium.launch({
+    executablePath,
+    headless: true,
+    args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--font-render-hinting=none', '--disable-lcd-text', '--force-color-profile=srgb', '--hide-scrollbars'],
+  })
+  const page = await browser.newPage({ viewport, deviceScaleFactor: 2, reducedMotion: 'reduce', timezoneId: 'UTC', locale: values.locale === 'zh' ? 'zh-CN' : 'en-US' })
+  const errors = []
+  page.on('pageerror', error => { errors.push(error.message) })
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
+  const url = `http://127.0.0.1:${server.address().port}/?theme=${values.theme}&locale=${values.locale}`
+  await page.goto(url, { waitUntil: 'networkidle' })
+  await page.evaluate(() => document.fonts.ready)
+  await page.waitForSelector('[data-renderer="webgl"] [data-room-ready="true"]')
+  const settle = () => page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))))
+  await settle()
+  if (values.panel) {
+    await page.locator(`[data-panel-id="${values.panel}"]`).click()
+    await page.locator(`[data-panel="${values.panel}"]`).waitFor()
+    await settle()
+  }
+  mkdirSync(dirname(output), { recursive: true })
+  await page.locator('#stage').screenshot({ path: output, animations: 'disabled' })
+  console.log(`Wrote ${output} (${statSync(output).size} bytes)`)
 
-// ---- 3. Shoot ----
-const executablePath = CHROME_CANDIDATES.find(existsSync)
-if (executablePath === undefined) {
-  console.error('no chrome binary found; set CHROME_PATH')
-  process.exit(1)
+  if (values.verify) {
+    const { verifyRoom } = await import('./verify.mjs')
+    await verifyRoom(page, { output, url, settle })
+  }
+  assert.deepEqual(errors, [], 'Browser errors')
+} finally {
+  await browser?.close()
+  await new Promise(done => server.close(done))
 }
-const browser = await chromium.launch({
-  executablePath,
-  headless: true,
-  args: ['--no-sandbox', '--font-render-hinting=none', '--disable-lcd-text', '--force-color-profile=srgb', '--hide-scrollbars', '--disable-skia-runtime-opts'],
-})
-const page = await browser.newPage({
-  viewport: { width: WIDTH, height: HEIGHT },
-  deviceScaleFactor: 2,
-  reducedMotion: 'reduce',
-})
-page.on('pageerror', error => console.error('[page]', error.message))
-await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'networkidle' })
-await page.evaluate(() => document.fonts.ready)
-await page.waitForSelector('[data-agent-team-stage]', { timeout: 15_000 })
-// Reduced motion cancels every animation, so a beat is safety, not tuning.
-await page.waitForTimeout(600)
-await page.locator('#stage').screenshot({ path: OUT, animations: 'disabled' })
-console.log('wrote', OUT, `${statSync(OUT).size} bytes`)
-await browser.close()
-server.close()

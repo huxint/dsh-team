@@ -1,10 +1,13 @@
-/**
- * The theme tokens the stage stylesheet mixes its surfaces from, as the
- * shipped theme sheet defines them for the light scheme (the README shot).
- * See the dsh-client-ui-theme package's alias sheet; every token here is one
- * the TeamStage.module.css actually reads.
- */
 export const themeTokens: Record<string, string> = {
+  '--dsw-font-family': "system-ui, -apple-system, 'Noto Sans CJK SC', sans-serif",
+  '--dsw-font-xs-13': '13px/20px var(--dsw-font-family)',
+  '--dsw-font-xxs-12': '12px/18px var(--dsw-font-family)',
+  '--dsw-font-xxxs-11': '11px/14px var(--dsw-font-family)',
+  '--dsw-font-base-strong-16': '500 16px/24px var(--dsw-font-family)',
+  '--dsw-font-s-strong-14': '500 14px/22px var(--dsw-font-family)',
+  '--dsw-shadow-lv1': '0 2px 4px 0 #0000000d',
+  '--dsw-shadow-lv2': '0 4px 12px 0 #00000005, 0 2px 8px 0 #0000000a',
+  '--dsw-shadow-lv3': '0 0 1px 0 #0003, 0 0 4px 0 #00000005, 0 12px 32px 0 #00000014',
   '--dsw-alias-bg-base': '#fff',
   '--dsw-alias-bg-overlay': '#e9ecf2',
   '--dsw-alias-label-primary': '#0f1115',
@@ -42,4 +45,25 @@ export const themeTokens: Record<string, string> = {
   '--dsw-static-red-400': '#f25a5a',
   '--dsw-static-red-600': '#ec1313',
   '--dsw-static-green-500': '#22c55e',
+}
+
+export const darkTokens: Record<string, string> = {
+  '--dsw-alias-bg-base': '#151517',
+  '--dsw-alias-bg-overlay': '#61666b',
+  '--dsw-alias-label-primary': '#f9fafb',
+  '--dsw-alias-label-secondary': '#cfd3d6',
+  '--dsw-alias-label-tertiary': '#adb2b8',
+  '--dsw-alias-label-dimmed': '#43454a',
+  '--dsw-alias-border-l1': '#ffffff0f',
+  '--dsw-alias-border-l2': '#ffffff1f',
+  '--dsw-alias-brand-primary': '#f9fafb',
+  '--dsw-alias-label-primary-inverted': '#353638',
+  '--dsw-alias-interactive-bg-hover': '#ffffff14',
+  '--dsw-alias-state-business-primary': '#679efe',
+  '--dsw-alias-state-warn-primary': '#f59e0b',
+  '--dsw-alias-state-warn-secondary': '#f7ad31',
+  '--dsw-alias-state-success-primary': '#22c55e',
+  '--dsw-alias-state-error-primary': '#f25a5a',
+  '--dsw-alias-bg-mask-1': '#00000080',
+  '--dsw-alias-bg-mask-2': '#0003',
 }
