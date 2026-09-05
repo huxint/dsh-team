@@ -6,7 +6,7 @@
 
 [![npm](https://img.shields.io/npm/v/dsh-team)](https://www.npmjs.com/package/dsh-team)
 [![license](https://img.shields.io/npm/l/dsh-team)](./LICENSE)
-![dsh](https://img.shields.io/badge/dsh-0.1.1--rc.2-blue)
+![dsh](https://img.shields.io/badge/dsh-0.1.2--rc.1-blue)
 
 ![团队协作室运行截图](./screenshots/image.png)
 

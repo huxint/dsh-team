@@ -190,17 +190,16 @@ interface IncomingMessage {
 /**
  * Narrow one delivered message's source into a mailbox row, or reject it.
  *
- * Three vocabularies reach a leader's log: this plugin's own `team-message`
- * deliveries, and the harness's `subagent-report` / `subagent-settled` edges,
- * which a teammate produces through the built-in `report` tool and through the
- * end of its activation. The last two also arrive from ordinary subagents, so
- * the caller keeps only senders that are on the roster.
+ * Team deliveries use `team-message`; current continuation messages use
+ * `agent-message`; historical report and settlement sources remain readable so
+ * existing leader logs keep their mailbox rows. The latter sources can also
+ * come from ordinary subagents, so the caller keeps only roster members.
  */
 function readIncoming(source: unknown): IncomingMessage | undefined {
   const record = asRecord(source)
   if (record === undefined) return undefined
   const kind = record['kind']
-  if (kind !== 'team-message' && kind !== 'subagent-report' && kind !== 'subagent-settled') return undefined
+  if (kind !== 'team-message' && kind !== 'agent-message' && kind !== 'subagent-report' && kind !== 'subagent-settled') return undefined
   const senderSessionId = asText(record['senderSessionId'])
   if (senderSessionId === undefined) return undefined
   const senderName = asText(record['senderName'])
@@ -209,7 +208,7 @@ function readIncoming(source: unknown): IncomingMessage | undefined {
     senderSessionId,
     ...senderName !== undefined ? { senderName } : {},
     ...hop !== undefined ? { hop } : {},
-    kind: kind === 'team-message' ? 'message' : kind === 'subagent-report' ? 'report' : 'settled',
+    kind: kind === 'team-message' || kind === 'agent-message' ? 'message' : kind === 'subagent-report' ? 'report' : 'settled',
   }
 }
 

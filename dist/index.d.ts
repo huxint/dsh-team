@@ -50,7 +50,7 @@ type TeamTaskStatus = 'pending' | 'active' | 'done';
 type TeamMessageKind =
 /** Content one member addressed to another through `team_send`. */
 'message' |
-/** A teammate's own result, delivered through the harness `report` tool. */
+/** A teammate's own result, delivered through the continuation settlement message. */
 'report' |
 /** The runtime's account of a teammate's activation ending. */
 'settled';
@@ -290,10 +290,10 @@ declare class TeamService extends Service {
   teamOf(leader: Agent): TeamState;
   /**
    * Adopt one continuable child into the team world while its scope is being
-   * composed. Called from the teammate setup contribution, which runs inside
-   * the child's unpublished creation window — on cold resume the child is
-   * already on the leader's roster, and only a child the roster has never seen
-   * can be the spawn currently in flight.
+   * composed. Called from the teammate setup contribution after the child is
+   * published — on cold resume the child is already on the leader's roster,
+   * and only a child the roster has never seen can be the spawn currently in
+   * flight.
    * @param child - the unpublished child agent.
    * @returns the membership facts, or undefined for a child outside any team.
    */

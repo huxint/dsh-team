@@ -9,7 +9,7 @@
 
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SessionListState } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { TeamBoardEntryView, TeamMemberView, TeamMessageView, TeamTaskView } from '../src/contract.ts'
 import { TeamStage, type TeamStageProps, type TeamPanelState } from '../src/client/TeamStage.tsx'
 import { en, type TeamKey } from '../src/client/locales.ts'

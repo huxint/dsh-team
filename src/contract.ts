@@ -17,7 +17,7 @@ export type TeamTaskStatus = 'pending' | 'active' | 'done'
 export type TeamMessageKind =
   /** Content one member addressed to another through `team_send`. */
   | 'message'
-  /** A teammate's own result, delivered through the harness `report` tool. */
+  /** A teammate's own result, delivered through the continuation settlement message. */
   | 'report'
   /** The runtime's account of a teammate's activation ending. */
   | 'settled'

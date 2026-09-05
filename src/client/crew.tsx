@@ -45,8 +45,18 @@ const ACCENTS = [0, 46, 96, 148, 200, 252, 296, 330] as const
  * @returns the custom property the stage styles read.
  */
 export function accentOf(seat: number): CSSProperties {
-  const shift = seat < 0 ? 0 : ACCENTS[(seat + 1) % ACCENTS.length] ?? 0
-  return { '--team-accent-shift': `${shift}deg` } as CSSProperties
+  return { '--team-accent-shift': `${accentShiftOf(seat)}deg` } as CSSProperties
+}
+
+/**
+ * How far this seat turns the room's hue, in degrees: the number behind
+ * `accentOf`, for the WebGL room to paint a member's mug and cushion in the
+ * same colour its hood wears.
+ * @param seat - the member's index on the roster; the leader passes -1.
+ * @returns the hue shift.
+ */
+export function accentShiftOf(seat: number): number {
+  return seat < 0 ? 0 : ACCENTS[(seat + 1) % ACCENTS.length] ?? 0
 }
 
 /** Pick the nth entry of a wardrobe rack, counting the leader as the first. */

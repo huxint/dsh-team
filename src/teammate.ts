@@ -1,8 +1,7 @@
 /**
  * The teammate world: what one continuable child gains when it is a member of
- * a team. Installed through `ctx.subagents.registerContinuableSetup`, so it
- * runs inside the child's unpublished creation window on both fresh spawn and
- * cold resume, and unwinds with that child.
+ * a team. The setup follows the agent lifecycle: it is installed as soon as a
+ * child is published and removed on disposal.
  *
  * A child that belongs to no team receives nothing: an ordinary subagent must
  * not see team tools it cannot use.
@@ -12,7 +11,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-subagent'
 import type { TeamService } from './service.ts'
 import { boardTool, listTool, noteTool, sendTool } from './tools.ts'
@@ -47,6 +46,31 @@ function release(disposers: readonly (() => void)[]): void {
   }
   if (failures.length === 1) throw failures[0]
   if (failures.length > 1) throw new AggregateError(failures, 'dsh-team: teammate teardown failed')
+}
+
+type ChildSetup = (childCtx: Context) => () => void
+
+/** Observe the live agent registry so cold resumes and fresh children share one setup path. */
+function registerChildSetup(ctx: Context, setup: ChildSetup): () => void {
+  const installed = new Map<SessionId, () => void>()
+  const install = (agent: Agent): void => {
+    if (agent.session.header.origin !== 'subagent' || installed.has(agent.id)) return
+    const dispose = setup(agent.ctx)
+    installed.set(agent.id, dispose)
+  }
+  const disposeCreated = ctx.on('agent/created', (payload: { agent: Agent }) => { install(payload.agent) })
+  const disposeRemoved = ctx.on('agent/disposed', (payload: { agent: Agent }) => {
+    const dispose = installed.get(payload.agent.id)
+    installed.delete(payload.agent.id)
+    dispose?.()
+  })
+  for (const agent of ctx.agents.list()) install(agent)
+  return () => {
+    disposeRemoved()
+    disposeCreated()
+    for (const dispose of installed.values()) dispose()
+    installed.clear()
+  }
 }
 
 /** One roster line as a teammate reads it. */
@@ -100,10 +124,10 @@ function briefing(ctx: Context, team: TeamService, child: Agent): string {
     reach,
     list,
     tasks,
-    'Nobody sees your session but you, so deliver results with the report tool — a self-contained answer, not '
-    + '"done". Use team_send when you need something FROM a member mid-task; the reply arrives later as its '
+    'Nobody sees your session but you, so deliver results to the leader with team_send — a self-contained answer, '
+    + 'not "done". Use team_send when you need something FROM a member mid-task; the reply arrives later as its '
     + 'own turn, so do not wait for it in place. team_list shows the roster, the shared task list, and recent '
-    + 'traffic. When you have reported, stop and wait for the next message instead of starting work nobody '
+    + 'traffic. When you have sent the outcome, stop and wait for the next message instead of starting work nobody '
     + 'asked for. A conversation between teammates is budgeted: it may only relay so far and one pair may not '
     + 'keep trading messages inside it, so put everything you need into one message rather than negotiating. '
     + 'Reaching the leader is never refused — when an exchange with a peer stops converging, say so to the '
@@ -112,27 +136,12 @@ function briefing(ctx: Context, team: TeamService, child: Agent): string {
 }
 
 /**
- * Pin one teammate's reasoning effort onto its own requests. `AgentOptions`
- * carries no effort — it is request-header state — so the child's scoped
- * request waterfall is where a per-teammate effort belongs.
- * @param childCtx - the teammate's scoped context.
- * @param effort - the provider-owned effort id recorded at spawn.
- * @returns the disposer for the scoped listener.
- */
-function installEffort(childCtx: Context, effort: string): () => void {
-  return childCtx.on('agent/request', async (_payload, next) => ({
-    ...await next(),
-    reasoningEffort: ReasoningEffortId(effort),
-  }))
-}
-
-/**
  * Register the teammate composition for every continuable child of a team.
  * @param ctx - context carrying the team and subagent services.
  * @returns the exact effect disposer removing the contribution.
  */
 export function installTeammateWorld(ctx: Context): () => void {
-  return ctx.subagents.registerContinuableSetup((childCtx) => {
+  return registerChildSetup(ctx, (childCtx) => {
     const child = childCtx.agent
     if (child === undefined) return () => {}
     const member = ctx.team.adopt(child)
@@ -146,7 +155,6 @@ export function installTeammateWorld(ctx: Context): () => void {
       }))
       disposers.push(childCtx.tools.register(sendTool(ctx, 'member')))
       disposers.push(childCtx.tools.register(listTool(ctx, 'member')))
-      if (member.effort !== undefined) disposers.push(installEffort(childCtx, member.effort))
     } catch (error: unknown) {
       release(disposers)
       throw error
@@ -166,7 +174,7 @@ export function installTeammateWorld(ctx: Context): () => void {
  * @returns the exact effect disposer removing the contribution.
  */
 export function installTeammateWorkspace(ctx: Context, workspace: TeamWorkspace): () => void {
-  return ctx.subagents.registerContinuableSetup((childCtx) => {
+  return registerChildSetup(ctx, (childCtx) => {
     const child = childCtx.agent
     const leaderId = child?.session.header.parentSession
     const roster = child === undefined ? undefined : ctx.team.rosterFor(child)

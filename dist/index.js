@@ -3,6 +3,7 @@ import { ReasoningEffortId, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { z as z$1 } from "zod";
 import { Service } from "@deepseek-ai/cordis";
 import { SessionId } from "@deepseek-ai/dsh-session";
+import { queueHostSubagentPrompt } from "@deepseek-ai/dsh-subagent/internal";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { defineDomain, domainTable } from "@deepseek-ai/dsh-storage-domain";
 //#region src/config.ts
@@ -221,17 +222,16 @@ function readFact(meta) {
 /**
 * Narrow one delivered message's source into a mailbox row, or reject it.
 *
-* Three vocabularies reach a leader's log: this plugin's own `team-message`
-* deliveries, and the harness's `subagent-report` / `subagent-settled` edges,
-* which a teammate produces through the built-in `report` tool and through the
-* end of its activation. The last two also arrive from ordinary subagents, so
-* the caller keeps only senders that are on the roster.
+* Team deliveries use `team-message`; current continuation messages use
+* `agent-message`; historical report and settlement sources remain readable so
+* existing leader logs keep their mailbox rows. The latter sources can also
+* come from ordinary subagents, so the caller keeps only roster members.
 */
 function readIncoming(source) {
 	const record = asRecord(source);
 	if (record === void 0) return void 0;
 	const kind = record["kind"];
-	if (kind !== "team-message" && kind !== "subagent-report" && kind !== "subagent-settled") return void 0;
+	if (kind !== "team-message" && kind !== "agent-message" && kind !== "subagent-report" && kind !== "subagent-settled") return void 0;
 	const senderSessionId = asText(record["senderSessionId"]);
 	if (senderSessionId === void 0) return void 0;
 	const senderName = asText(record["senderName"]);
@@ -240,7 +240,7 @@ function readIncoming(source) {
 		senderSessionId,
 		...senderName !== void 0 ? { senderName } : {},
 		...hop !== void 0 ? { hop } : {},
-		kind: kind === "team-message" ? "message" : kind === "subagent-report" ? "report" : "settled"
+		kind: kind === "team-message" || kind === "agent-message" ? "message" : kind === "subagent-report" ? "report" : "settled"
 	};
 }
 /** Append one row to the bounded feed. */
@@ -461,7 +461,7 @@ function teamProjection(maxRecentMessages) {
 			viewSchema: teamViewSchema,
 			view: (state) => state
 		},
-		stateVersion: 3
+		stateVersion: 4
 	};
 }
 //#endregion
@@ -572,10 +572,10 @@ var TeamService = class extends Service {
 	}
 	/**
 	* Adopt one continuable child into the team world while its scope is being
-	* composed. Called from the teammate setup contribution, which runs inside
-	* the child's unpublished creation window — on cold resume the child is
-	* already on the leader's roster, and only a child the roster has never seen
-	* can be the spawn currently in flight.
+	* composed. Called from the teammate setup contribution after the child is
+	* published — on cold resume the child is already on the leader's roster,
+	* and only a child the roster has never seen can be the spawn currently in
+	* flight.
 	* @param child - the unpublished child agent.
 	* @returns the membership facts, or undefined for a child outside any team.
 	*/
@@ -611,7 +611,10 @@ var TeamService = class extends Service {
 		if (team.members.size >= this.config.maxTeammates) throw new TeamError("MAX_TEAMMATES", String(this.config.maxTeammates));
 		if (findByName(team, request.name) !== void 0) throw new TeamError("DUPLICATE_NAME", request.name);
 		await this.assertEffortOffered(leader, request);
-		const agentOptions = { ...request.model !== void 0 ? { model: request.model } : {} };
+		const agentOptions = {
+			...request.model !== void 0 ? { model: request.model } : {},
+			...request.reasoningEffort !== void 0 ? { reasoningEffort: ReasoningEffortId(request.reasoningEffort) } : {}
+		};
 		const pending = {
 			fact: {
 				name: request.name,
@@ -849,7 +852,7 @@ var TeamService = class extends Service {
 	/** The durable view the leader's log folds to (the projection registry's cached cut). */
 	durableView(leader) {
 		const registry = this.ctx.get("sessionProjections");
-		if (registry === void 0) return foldTeam(leader.session.events, this.config.maxRecentMessages);
+		if (registry === void 0) return foldTeam(leader.session.snapshotEvents(), this.config.maxRecentMessages);
 		return registry.snapshot(leader.session).values.team ?? EMPTY_TEAM_VIEW;
 	}
 	/** Live runtime state of one teammate; `ready` means no live agent remains. */
@@ -987,10 +990,7 @@ var TeamService = class extends Service {
 			actor.leader.send(message, "next-turn", true);
 			return message.id;
 		}
-		return await this.ctx.subagents.followup(actor.leader, SessionId(recipient.id), content, {
-			source,
-			signal
-		});
+		return await queueHostSubagentPrompt(this.ctx.subagents, actor.leader, SessionId(recipient.id), content, source, signal);
 	}
 	/**
 	* Reject a reasoning effort the selected model does not offer, at spawn
@@ -1390,7 +1390,7 @@ function spawnTool(ctx) {
 function sendTool(ctx, audience) {
 	return defineTool({
 		name: "team_send",
-		description: audience === "leader" ? "Send a message to one teammate you have already spawned — with no team yet there is nobody to write to, so team_spawn comes first. It becomes that teammate's next turn: if it is busy, the message waits until the current turn ends, so it cannot redirect work already underway. Delivery is asynchronous — this returns once the message is accepted, never the teammate's answer; the reply arrives later as its own message to you." : "Send a message to another team member. Address the leader as \"leader\", or a teammate by its name. The message becomes the recipient's next turn; you get no answer back from this call. Use it to ask a peer for input, hand work over, or raise something with the leader mid-task. Finished work goes to the leader through the report tool instead. A conversation between teammates carries a budget: it may only relay so far and you may not keep going back and forth with the same member about it, so ask for what you actually need in one message. Messaging the leader is never refused — when a peer exchange stops converging, that is the way out.",
+		description: audience === "leader" ? "Send a message to one teammate you have already spawned — with no team yet there is nobody to write to, so team_spawn comes first. It becomes that teammate's next turn: if it is busy, the message waits until the current turn ends, so it cannot redirect work already underway. Delivery is asynchronous — this returns once the message is accepted, never the teammate's answer; the reply arrives later as its own message to you." : "Send a message to another team member. Address the leader as \"leader\", or a teammate by its name. The message becomes the recipient's next turn; you get no answer back from this call. Use it to ask a peer for input, hand work over, or raise something with the leader mid-task. Finished work goes to the leader through team_send. A conversation between teammates carries a budget: it may only relay so far and you may not keep going back and forth with the same member about it, so ask for what you actually need in one message. Messaging the leader is never refused — when a peer exchange stops converging, that is the way out.",
 		parameters: {
 			to: {
 				type: "string",
@@ -1453,15 +1453,14 @@ function sendTool(ctx, audience) {
 }
 /**
 * `team_task` — the shared task list. Writes are the leader's; teammates read
-* it through `team_list` and report their outcomes through the built-in
-* `report` tool.
+* it through `team_list` and send outcomes through `team_send`.
 * @param ctx - context carrying the team service.
 * @returns the tool definition.
 */
 function taskTool(ctx) {
 	return defineTool({
 		name: "team_task",
-		description: "Create or update one row of the shared team task list — the list every teammate can read, so it is where multi-teammate work is coordinated without routing every detail through messages. The list belongs to a live team, so spawn the teammates first: a row nobody is on the roster to read changes nothing, and assigning one to a name that is not on the roster is refused. Omit task_id to create a row (title required); pass task_id to update one. Assign with a teammate name or member id. A teammate closes its own row through its report, so you rarely set status yourself.",
+		description: "Create or update one row of the shared team task list — the list every teammate can read, so it is where multi-teammate work is coordinated without routing every detail through messages. The list belongs to a live team, so spawn the teammates first: a row nobody is on the roster to read changes nothing, and assigning one to a name that is not on the roster is refused. Omit task_id to create a row (title required); pass task_id to update one. Assign with a teammate name or member id. A teammate closes its own row by sending the outcome to the leader, so you rarely set status yourself.",
 		parameters: {
 			title: {
 				type: "string",
@@ -1968,6 +1967,30 @@ function release(disposers) {
 	if (failures.length === 1) throw failures[0];
 	if (failures.length > 1) throw new AggregateError(failures, "dsh-team: teammate teardown failed");
 }
+/** Observe the live agent registry so cold resumes and fresh children share one setup path. */
+function registerChildSetup(ctx, setup) {
+	const installed = /* @__PURE__ */ new Map();
+	const install = (agent) => {
+		if (agent.session.header.origin !== "subagent" || installed.has(agent.id)) return;
+		const dispose = setup(agent.ctx);
+		installed.set(agent.id, dispose);
+	};
+	const disposeCreated = ctx.on("agent/created", (payload) => {
+		install(payload.agent);
+	});
+	const disposeRemoved = ctx.on("agent/disposed", (payload) => {
+		const dispose = installed.get(payload.agent.id);
+		installed.delete(payload.agent.id);
+		dispose?.();
+	});
+	for (const agent of ctx.agents.list()) install(agent);
+	return () => {
+		disposeRemoved();
+		disposeCreated();
+		for (const dispose of installed.values()) dispose();
+		installed.clear();
+	};
+}
 /** One roster line as a teammate reads it. */
 function memberLine(member) {
 	const parts = [member.role, member.relation === "peer" ? "peer" : "managed"].filter((part) => part !== void 0);
@@ -2003,22 +2026,8 @@ function briefing(ctx, team, child) {
 		reach,
 		list,
 		mine.length === 0 ? "No task on the shared list is assigned to you right now." : `Assigned to you on the shared task list: ${mine.map((task) => `${task.taskId} "${task.title}"`).join("; ")}.`,
-		"Nobody sees your session but you, so deliver results with the report tool — a self-contained answer, not \"done\". Use team_send when you need something FROM a member mid-task; the reply arrives later as its own turn, so do not wait for it in place. team_list shows the roster, the shared task list, and recent traffic. When you have reported, stop and wait for the next message instead of starting work nobody asked for. A conversation between teammates is budgeted: it may only relay so far and one pair may not keep trading messages inside it, so put everything you need into one message rather than negotiating. Reaching the leader is never refused — when an exchange with a peer stops converging, say so to the leader and move on."
+		"Nobody sees your session but you, so deliver results to the leader with team_send — a self-contained answer, not \"done\". Use team_send when you need something FROM a member mid-task; the reply arrives later as its own turn, so do not wait for it in place. team_list shows the roster, the shared task list, and recent traffic. When you have sent the outcome, stop and wait for the next message instead of starting work nobody asked for. A conversation between teammates is budgeted: it may only relay so far and one pair may not keep trading messages inside it, so put everything you need into one message rather than negotiating. Reaching the leader is never refused — when an exchange with a peer stops converging, say so to the leader and move on."
 	].join("\n");
-}
-/**
-* Pin one teammate's reasoning effort onto its own requests. `AgentOptions`
-* carries no effort — it is request-header state — so the child's scoped
-* request waterfall is where a per-teammate effort belongs.
-* @param childCtx - the teammate's scoped context.
-* @param effort - the provider-owned effort id recorded at spawn.
-* @returns the disposer for the scoped listener.
-*/
-function installEffort(childCtx, effort) {
-	return childCtx.on("agent/request", async (_payload, next) => ({
-		...await next(),
-		reasoningEffort: ReasoningEffortId(effort)
-	}));
 }
 /**
 * Register the teammate composition for every continuable child of a team.
@@ -2026,11 +2035,10 @@ function installEffort(childCtx, effort) {
 * @returns the exact effect disposer removing the contribution.
 */
 function installTeammateWorld(ctx) {
-	return ctx.subagents.registerContinuableSetup((childCtx) => {
+	return registerChildSetup(ctx, (childCtx) => {
 		const child = childCtx.agent;
 		if (child === void 0) return () => {};
-		const member = ctx.team.adopt(child);
-		if (member === void 0) return () => {};
+		if (ctx.team.adopt(child) === void 0) return () => {};
 		const disposers = [];
 		try {
 			disposers.push(childCtx.systemPrompt.section({
@@ -2040,7 +2048,6 @@ function installTeammateWorld(ctx) {
 			}));
 			disposers.push(childCtx.tools.register(sendTool(ctx, "member")));
 			disposers.push(childCtx.tools.register(listTool(ctx, "member")));
-			if (member.effort !== void 0) disposers.push(installEffort(childCtx, member.effort));
 		} catch (error) {
 			release(disposers);
 			throw error;
@@ -2061,7 +2068,7 @@ function installTeammateWorld(ctx) {
 * @returns the exact effect disposer removing the contribution.
 */
 function installTeammateWorkspace(ctx, workspace) {
-	return ctx.subagents.registerContinuableSetup((childCtx) => {
+	return registerChildSetup(ctx, (childCtx) => {
 		const child = childCtx.agent;
 		const leaderId = child?.session.header.parentSession;
 		const roster = child === void 0 ? void 0 : ctx.team.rosterFor(child);

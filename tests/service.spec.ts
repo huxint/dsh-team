@@ -55,8 +55,15 @@ function world(options: {
   readonly efforts?: readonly string[]
 } = {}): World {
   const ctx = new Context()
-  const agents = new FakeAgents()
+  const agents = new FakeAgents(ctx)
   const subagents = new FakeSubagents()
+  subagents.publishChild = (childId, parentId, options) => {
+    agents.add(fakeAgent(String(childId), {
+      parent: String(parentId),
+      ...typeof options?.model === 'string' ? { model: options.model } : {},
+      ...typeof options?.reasoningEffort === 'string' ? { reasoningEffort: options.reasoningEffort } : {},
+    }))
+  }
   ctx.provide('agents', agents)
   ctx.provide('subagents', subagents)
   ctx.provide('sessions', {})
@@ -83,7 +90,9 @@ async function spawn(scene: World, name: string, options: {
     ...options.model !== undefined ? { model: options.model } : {},
     ...options.effort !== undefined ? { reasoningEffort: options.effort } : {},
   }, signal)
-  return scene.agents.add(fakeAgent(member.memberId, { parent: scene.leader.id }))
+  const child = scene.agents.getFake(member.memberId)
+  if (child === undefined) throw new Error(`published child ${member.memberId} is missing`)
+  return child
 }
 
 describe('spawn', () => {
@@ -118,6 +127,17 @@ describe('spawn', () => {
     expect(started.persona).toBe('terse')
     expect(started.agentOptions).toEqual({ model: 'reasoner' })
     expect(JSON.stringify(started.prompt)).toContain('review the diff')
+  })
+
+  it('passes a requested reasoning effort to the child runtime', async () => {
+    await scene.service.spawn(scene.leader.agent, {
+      name: 'Alice',
+      relation: 'managed',
+      task: 'reason carefully',
+      reasoningEffort: 'high',
+    }, signal)
+
+    expect(scene.subagents.started[0]?.agentOptions).toEqual({ reasoningEffort: 'high' })
   })
 
   it('refuses a teammate that tries to lead its own team', async () => {

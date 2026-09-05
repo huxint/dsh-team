@@ -10,7 +10,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { TeamMemberView, TeamView } from '../src/contract.ts'
 import { apply, type TeamPanelState } from '../src/client/index.ts'
 

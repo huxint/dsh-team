@@ -13,6 +13,7 @@ import type { ContentBlock, MessageSource, UserMessage } from '@deepseek-ai/dsh-
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader, SessionId as SessionIdType } from '@deepseek-ai/dsh-session'
+import { queueSubagentPrompt } from '@deepseek-ai/dsh-subagent/internal'
 
 /** One delivery an agent double accepted through its inbox. */
 export interface AcceptedMessage {
@@ -25,9 +26,15 @@ export interface AcceptedMessage {
 export interface FakeAgent {
   readonly id: SessionIdType
   status: 'idle' | 'running'
-  readonly session: { header: Record<string, unknown>; events: SessionEvent[] }
-  readonly options: { provider?: string; model?: string }
+  readonly session: {
+    header: Record<string, unknown>
+    events: SessionEvent[]
+    snapshotEvents(): readonly SessionEvent[]
+  }
+  readonly options: { provider?: string; model?: string; reasoningEffort?: string }
   readonly ctx: Context
+  readonly tools: FakeTools
+  readonly prompt: FakeSystemPrompt
   readonly received: AcceptedMessage[]
   /** Messages accepted through `steer` (the command plane's submission path). */
   readonly steered: UserMessage[]
@@ -48,6 +55,7 @@ export function fakeAgent(id: string, options: {
   readonly status?: 'idle' | 'running'
   readonly provider?: string
   readonly model?: string
+  readonly reasoningEffort?: string
   readonly events?: SessionEvent[]
 } = {}): FakeAgent {
   const self: FakeAgent = {
@@ -55,15 +63,19 @@ export function fakeAgent(id: string, options: {
     status: options.status ?? 'idle',
     session: {
       header: options.parent === undefined
-        ? { origin: 'user' }
-        : { origin: 'subagent', parentSession: SessionId(options.parent) },
+        ? { origin: 'user', isSeeded: false }
+        : { origin: 'subagent', parentSession: SessionId(options.parent), isSeeded: false },
       events: options.events ?? [],
+      snapshotEvents() { return this.events },
     },
     options: {
       ...options.provider !== undefined ? { provider: options.provider } : {},
       ...options.model !== undefined ? { model: options.model } : {},
+      ...options.reasoningEffort !== undefined ? { reasoningEffort: options.reasoningEffort } : {},
     },
     ctx: new Context(),
+    tools: new FakeTools(),
+    prompt: new FakeSystemPrompt(),
     received: [],
     steered: [],
     send(message, target, wakeup) {
@@ -76,6 +88,9 @@ export function fakeAgent(id: string, options: {
       return self as unknown as Agent
     },
   }
+  self.ctx.provide('agent', self.agent)
+  self.ctx.provide('tools', self.tools)
+  self.ctx.provide('systemPrompt', self.prompt)
   return self
 }
 
@@ -89,7 +104,7 @@ export interface StartedChild {
   readonly agentOptions?: Record<string, unknown>
 }
 
-/** One `followup` delivery the subagent double accepted. */
+/** One queued delivery the subagent double accepted. */
 export interface FollowupDelivery {
   readonly parentId: string
   readonly childId: string
@@ -102,14 +117,13 @@ export class FakeSubagents {
   readonly started: StartedChild[] = []
   readonly followups: FollowupDelivery[] = []
   readonly interrupted: string[] = []
-  /** Contributions registered through {@link registerContinuableSetup}. */
-  readonly setups: Array<(childCtx: Context) => () => void> = []
   /** Next child id handed out; the team never chooses one itself. */
   nextChildId = 'child-1'
   /** When set, `startContinuable` rejects with it. */
   failStart: Error | undefined
   /** Runs while a start is in flight, so a test can observe the composition window. */
   onStart: ((childId: SessionIdType) => void) | undefined
+  publishChild: ((childId: SessionIdType, parentId: SessionIdType, options?: Record<string, unknown>) => void) | undefined
 
   async startContinuable(spec: {
     provider: string
@@ -128,16 +142,23 @@ export class FakeSubagents {
       ...spec.request.agentOptions !== undefined ? { agentOptions: spec.request.agentOptions } : {},
     })
     this.onStart?.(childId)
+    this.publishChild?.(childId, spec.request.parent.id, spec.request.agentOptions)
     return await Promise.resolve({ childId, messageId: `m-${childId}` })
   }
 
-  async followup(
+  async [queueSubagentPrompt](
     parent: Agent,
     childId: SessionIdType,
     content: ContentBlock[],
-    options: { source: MessageSource; signal: AbortSignal },
+    source: MessageSource,
+    _signal: AbortSignal,
   ): Promise<string> {
-    this.followups.push({ parentId: parent.id, childId, content, source: options.source })
+    this.followups.push({
+      parentId: parent.id,
+      childId,
+      content,
+      source,
+    })
     return await Promise.resolve(`m-${this.followups.length}`)
   }
 
@@ -145,30 +166,33 @@ export class FakeSubagents {
     this.interrupted.push(targetSessionId)
   }
 
-  registerContinuableSetup(contribution: (childCtx: Context) => () => void): () => void {
-    this.setups.push(contribution)
-    return () => {
-      const index = this.setups.indexOf(contribution)
-      if (index >= 0) this.setups.splice(index, 1)
-    }
-  }
 }
 
 /** The `ctx.agents` double: a live registry backed by a map. */
 export class FakeAgents {
   private readonly byId = new Map<string, FakeAgent>()
 
+  constructor(private readonly ctx?: Context) {}
+
   add(agent: FakeAgent): FakeAgent {
     this.byId.set(agent.id, agent)
+    this.ctx?.emit('agent/created', { agent: agent.agent })
     return agent
   }
 
   remove(id: string): void {
+    const agent = this.byId.get(id)
+    if (agent === undefined) return
     this.byId.delete(id)
+    this.ctx?.emit('agent/disposed', { agent: agent.agent })
   }
 
   get(id: string): Agent | undefined {
     return this.byId.get(id)?.agent
+  }
+
+  getFake(id: string): FakeAgent | undefined {
+    return this.byId.get(id)
   }
 
   list(): Agent[] {
@@ -289,5 +313,5 @@ export function fakeExec(agent: FakeAgent): { agent: Agent; signal: AbortSignal 
  * starts empty for every session, so the double carries nothing but identity.
  */
 export function testHeader(id = 'session-1'): SessionHeader {
-  return { version: 0, id: SessionId(id), createdAt: 1_700_000_000_000 }
+  return { version: 0, id: SessionId(id), createdAt: 1_700_000_000_000, isSeeded: false }
 }

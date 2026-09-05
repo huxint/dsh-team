@@ -163,7 +163,7 @@ export function sendTool(ctx: Context, audience: 'leader' | 'member'): ToolDefin
     : 'Send a message to another team member. Address the leader as "leader", or a teammate by its name. '
       + 'The message becomes the recipient\'s next turn; you get no answer back from this call. Use it to ask '
       + 'a peer for input, hand work over, or raise something with the leader mid-task. Finished work goes to '
-      + 'the leader through the report tool instead. A conversation between teammates carries a budget: it '
+      + 'the leader through team_send. A conversation between teammates carries a budget: it '
       + 'may only relay so far and you may not keep going back and forth with the same member about it, so '
       + 'ask for what you actually need in one message. Messaging the leader is never refused — when a peer '
       + 'exchange stops converging, that is the way out.'
@@ -212,8 +212,7 @@ export function sendTool(ctx: Context, audience: 'leader' | 'member'): ToolDefin
 
 /**
  * `team_task` — the shared task list. Writes are the leader's; teammates read
- * it through `team_list` and report their outcomes through the built-in
- * `report` tool.
+ * it through `team_list` and send outcomes through `team_send`.
  * @param ctx - context carrying the team service.
  * @returns the tool definition.
  */
@@ -226,7 +225,7 @@ export function taskTool(ctx: Context): ToolDefinition {
       + 'belongs to a live team, so spawn the teammates first: a row nobody is on the roster to read changes '
       + 'nothing, and assigning one to a name that is not on the roster is refused. Omit task_id '
       + 'to create a row (title required); pass task_id to update one. Assign with a teammate name or member '
-      + 'id. A teammate closes its own row through its report, so you rarely set status yourself.',
+      + 'id. A teammate closes its own row by sending the outcome to the leader, so you rarely set status yourself.',
     parameters: {
       title: { type: 'string', description: 'Task title; required when creating.' },
       assignee: { type: 'string', description: 'Teammate name or member id; omit to leave the task unassigned.' },

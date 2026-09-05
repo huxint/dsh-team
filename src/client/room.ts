@@ -180,31 +180,31 @@ export function aisleFor(y: number): number {
  * has to know about them; the stylesheet draws them inside the projected
  * lounge box at the matching fractions of it.
  */
-export const ROOM_BLOCKS: readonly Rect[] = [
+export const BLOCKS = {
   /** The sofa, along the back of the corner. */
-  { x: LOUNGE.x + 2.3, y: LOUNGE.y + 1, w: 14.5, h: 7 },
+  sofa: { x: LOUNGE.x + 2.3, y: LOUNGE.y + 1, w: 14.5, h: 7 },
   /** The low table in front of it. */
-  { x: LOUNGE.x + 4.9, y: LOUNGE.y + 11, w: 10, h: 4.5 },
+  table: { x: LOUNGE.x + 4.9, y: LOUNGE.y + 11, w: 10, h: 4.5 },
   /** The plant, in the far corner. */
-  { x: LOUNGE.x + 21, y: LOUNGE.y + 2, w: 6, h: 6 },
+  plant: { x: LOUNGE.x + 21, y: LOUNGE.y + 2, w: 6, h: 6 },
   /** The water cooler, against the right wall. */
-  { x: LOUNGE.x + 22, y: LOUNGE.y + 12, w: 6, h: 6.5 },
+  cooler: { x: LOUNGE.x + 22, y: LOUNGE.y + 12, w: 6, h: 6.5 },
+  /** The floor lamp at the corner's edge. */
+  lamp: { x: LOUNGE.x + 0.5, y: LOUNGE.y + 8, w: 3, h: 3 },
   /**
    * The treadmill, in the front-right corner: the wellness zone, in front of
-   * the lounge and out of every walkway. The rectangle covers the whole drawn
-   * machine, deck and console, because the part of a tall prop that reads as
-   * "here" on a shallow floor is its full visual bulk, not just its feet.
+   * the lounge and out of every walkway.
    */
-  { x: 86, y: 70, w: 12, h: 17 },
+  treadmill: { x: 86, y: 70, w: 11, h: 15 },
   /**
    * The filing cabinet, printer and coffee machine, clustered against the
-   * left wall beside the desks. The rectangle spans the cluster's full drawn
-   * height — a tall cabinet's screen area reaches well back of its base on a
-   * floor seen this shallow — so a walker is kept out of the machine, not
-   * merely out from under it.
+   * left wall beside the desks, and the floor a walker keeps clear of them.
    */
-  { x: 0.5, y: 41, w: 12, h: 24 },
-]
+  utility: { x: 0.5, y: 41, w: 11, h: 22 },
+} as const satisfies Record<string, Rect>
+
+/** The standing furniture as one list, for the walks. */
+export const ROOM_BLOCKS: readonly Rect[] = Object.values(BLOCKS)
 
 /**
  * Everything a walk goes around: the standing furniture of the room plus one

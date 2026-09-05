@@ -36,8 +36,15 @@ let removeWorld: () => void
 
 beforeEach(() => {
   ctx = new Context()
-  agents = new FakeAgents()
+  agents = new FakeAgents(ctx)
   subagents = new FakeSubagents()
+  subagents.publishChild = (childId, parentId, options) => {
+    agents.add(fakeAgent(String(childId), {
+      parent: String(parentId),
+      ...typeof options?.model === 'string' ? { model: options.model } : {},
+      ...typeof options?.reasoningEffort === 'string' ? { reasoningEffort: options.reasoningEffort } : {},
+    }))
+  }
   ctx.provide('agents', agents)
   ctx.provide('subagents', subagents)
   service = new TeamService(ctx, CONFIG)
@@ -45,17 +52,15 @@ beforeEach(() => {
   removeWorld = installTeammateWorld(ctx)
 })
 
-/** Compose one child through the registered contribution, as the seam does. */
+/** Read the child scope composed by the agent lifecycle listener. */
 function compose(agent: FakeAgent): Child {
-  const childCtx = new Context()
-  const tools = new FakeTools()
-  const prompt = new FakeSystemPrompt()
-  childCtx.provide('agent', agent.agent)
-  childCtx.provide('tools', tools)
-  childCtx.provide('systemPrompt', prompt)
-  const contribution = subagents.setups[0]
-  if (contribution === undefined) throw new Error('no continuable setup was registered')
-  return { ctx: childCtx, tools, prompt, agent, release: contribution(childCtx) }
+  return {
+    ctx: agent.ctx,
+    tools: agent.tools,
+    prompt: agent.prompt,
+    agent,
+    release: () => agents.remove(agent.id),
+  }
 }
 
 /** Spawn one teammate and publish its live agent double. */
@@ -70,21 +75,24 @@ async function spawn(name: string, options: {
     relation: options.relation ?? 'managed',
     ...options.effort !== undefined ? { reasoningEffort: options.effort } : {},
   }, signal)
-  return agents.add(fakeAgent(member.memberId, { parent: leader.id }))
+  const child = agents.getFake(member.memberId)
+  if (child === undefined) throw new Error(`published child ${member.memberId} is missing`)
+  return child
 }
 
 describe('composition', () => {
-  it('registers one contribution for every continuable child, and takes it back', () => {
-    expect(subagents.setups).toHaveLength(1)
+  it('composes published children and removes their world on disposal', () => {
     removeWorld()
-    expect(subagents.setups).toHaveLength(0)
+    const child = fakeAgent('child-1', { parent: leader.id })
+    agents.add(child)
+    expect(child.tools.registered).toEqual([])
   })
 
   it('gives an ordinary subagent nothing at all', () => {
-    const stranger = compose(fakeAgent('other-child', { parent: 'unrelated-leader' }))
+    const stranger = compose(agents.add(fakeAgent('other-child', { parent: 'unrelated-leader' })))
     expect(stranger.tools.registered).toEqual([])
     expect(stranger.prompt.sections).toEqual([])
-    expect(() => { stranger.release() }).not.toThrow()
+    stranger.release()
   })
 
   it('equips a teammate with the mailbox, the team read, and its briefing', async () => {
@@ -147,33 +155,5 @@ describe('briefing', () => {
     expect(text).toContain('team is intact')
     expect(text).toContain('team_note')
     expect(text).not.toContain('no longer active')
-  })
-})
-
-describe('reasoning effort', () => {
-  /** Dispatch the child's own request waterfall, as the agent loop does. */
-  async function requestConfig(child: Child): Promise<Record<string, unknown>> {
-    const payload = { agent: child.agent.agent, turn: 1, step: 1, signal }
-    return await child.ctx.waterfall(
-      'agent/request',
-      payload as never,
-      (() => Promise.resolve({ provider: 'deepseek', model: 'chat' })) as never,
-    ) as unknown as Record<string, unknown>
-  }
-
-  it('pins the effort recorded at spawn onto the teammate own requests', async () => {
-    const child = compose(await spawn('Alice', { effort: 'high' }))
-    expect(await requestConfig(child)).toEqual({ provider: 'deepseek', model: 'chat', reasoningEffort: 'high' })
-  })
-
-  it('leaves the request untouched for a teammate that asked for no effort', async () => {
-    const child = compose(await spawn('Alice'))
-    expect(await requestConfig(child)).toEqual({ provider: 'deepseek', model: 'chat' })
-  })
-
-  it('stops pinning once the child unwinds', async () => {
-    const child = compose(await spawn('Alice', { effort: 'high' }))
-    child.release()
-    expect(await requestConfig(child)).toEqual({ provider: 'deepseek', model: 'chat' })
   })
 })

@@ -9,18 +9,19 @@ import { describe, expect, it } from 'vitest'
 import { EMPTY_TEAM_VIEW, type TeamView } from '../src/contract.ts'
 import { teamProjection } from '../src/projection.ts'
 import { testHeader, toolResultEvent, userMessageEvent } from './harness.ts'
+import { SessionLogOffset } from '@deepseek-ai/dsh-session'
 
 const unit = teamProjection(3)
 
 describe('teamProjection', () => {
   it('is registered under the key the client reads, with a stated state version', () => {
     expect(unit.key).toBe('team')
-    expect(unit.stateVersion).toBe(3)
-    expect(unit.init(testHeader())).toEqual(EMPTY_TEAM_VIEW)
+    expect(unit.stateVersion).toBe(4)
+    expect(unit.init(testHeader(), SessionLogOffset(0))).toEqual(EMPTY_TEAM_VIEW)
   })
 
   it('serves its state as the value: one fold, no second shape to keep in step', () => {
-    const state = unit.apply(unit.init(testHeader()), toolResultEvent({
+    const state = unit.apply(unit.init(testHeader(), SessionLogOffset(0)), toolResultEvent({
       team: 'member-added',
       member: { memberId: 'child-1', name: 'Alice', relation: 'peer' },
     }))
@@ -28,12 +29,12 @@ describe('teamProjection', () => {
   })
 
   it('returns the same state for an event it does not own', () => {
-    const state = unit.init(testHeader())
+    const state = unit.init(testHeader(), SessionLogOffset(0))
     expect(unit.apply(state, toolResultEvent({ tool: 'bash' }))).toBe(state)
   })
 
   it('honours the deployment mailbox bound it was built with', () => {
-    let state = unit.init(testHeader())
+    let state = unit.init(testHeader(), SessionLogOffset(0))
     for (let index = 0; index < 5; index += 1) {
       state = unit.apply(state, toolResultEvent({
         team: 'message', messageId: `m${index}`, to: 'child-1', text: `t${index}`,
@@ -43,7 +44,7 @@ describe('teamProjection', () => {
   })
 
   it('validates the whole served value, including every mailbox kind', () => {
-    let state = unit.apply(unit.init(testHeader()), toolResultEvent({
+    let state = unit.apply(unit.init(testHeader(), SessionLogOffset(0)), toolResultEvent({
       team: 'member-added',
       member: { memberId: 'child-1', name: 'Alice', relation: 'peer', role: 'reviewer', model: 'x', effort: 'high' },
     }))

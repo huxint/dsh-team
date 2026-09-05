@@ -79,7 +79,7 @@ export function teamProjection(maxRecentMessages: number): TeamProjectionUnit {
     wire: { viewSchema: teamViewSchema, view: state => state },
     // 1: initial shape (members/tasks/messages folded from tool result meta).
     // 2: mailbox rows carry the conversation-chain depth they were delivered at.
-    // 3: the shared-workspace index the leader last saw rides the value.
-    stateVersion: 3,
+    // 4: inbound agent messages use the current continuation source vocabulary.
+    stateVersion: 4,
   }
 }

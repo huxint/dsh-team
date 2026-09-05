@@ -19,7 +19,9 @@ import {
   lengthOf, routeBetween, smooth, walkMs, wanderOf,
   type Point, type Post, type Rect,
 } from './room.ts'
-import { project } from './stagecraft.ts'
+import { FIGURE, project as legacyProject } from './stagecraft.ts'
+import { useRoomActivity, useStagecraft } from './scene/context.ts'
+import { canRender } from './scene/kit.ts'
 
 /**
  * Which way a member is turned. `front` faces the room, `away` is somebody
@@ -82,7 +84,10 @@ export function useWalk(
   target: Point,
   obstacles: readonly Rect[],
   base: number,
+  id: string,
 ): Gait {
+  const stage = useStagecraft()
+  const { visible, reducedMotion } = useRoomActivity()
   const node = useRef<HTMLElement | null>(null)
   /** Where the member is right now, to the frame. */
   const at = useRef<Point>({ x: home.x, y: home.y })
@@ -98,13 +103,25 @@ export function useWalk(
   const place = useCallback((point: Point): void => {
     const element = node.current
     if (element === null) return
-    const screen = project(point)
+    const screen = canRender()
+      ? stage.project(point)
+      : legacyProject(point)
     element.style.left = `${screen.left}%`
     element.style.top = `${screen.top}%`
-    element.style.setProperty('--team-scale', `${screen.scale * scale.current}`)
+    const unit = 'unit' in screen ? screen.unit * FIGURE : 140 * screen.scale
+    element.style.setProperty('--team-unit', `${unit * scale.current}px`)
     element.style.setProperty('--team-depth', `${Math.round(point.y)}`)
     element.style.setProperty('--team-gait', `${gait.current}`)
-  }, [])
+    stage.markSprite(id, point, scale.current)
+  }, [stage, id])
+
+  useEffect(() => {
+    const unsubscribe = stage.subscribe(() => { place(at.current) })
+    return () => {
+      unsubscribe()
+      stage.dropSprite(id)
+    }
+  }, [stage, id, place])
 
   const hang = useCallback((element: HTMLElement | null): void => {
     node.current = element
@@ -127,6 +144,7 @@ export function useWalk(
   }, [])
 
   useEffect(() => {
+    if (!visible) return undefined
     const start = at.current
     // Already there — or a trip cancelled within a step of its target. Either
     // way the member lands: a walk pose nobody is paying for would keep the
@@ -135,7 +153,7 @@ export function useWalk(
       settle()
       return undefined
     }
-    if (still()) {
+    if (reducedMotion || still()) {
       at.current = { x: target.x, y: target.y }
       place(at.current)
       settle()
@@ -200,7 +218,7 @@ export function useWalk(
     setPose({ facing: facing.current, walking: true })
     frame = requestAnimationFrame(tick)
     return () => { cancelAnimationFrame(frame) }
-  }, [target.x, target.y, obstacles, place, settle])
+  }, [target.x, target.y, obstacles, place, settle, visible, reducedMotion])
 
   return { ref: hang, facing: pose.facing, walking: pose.walking }
 }
@@ -219,12 +237,13 @@ const WANDER_MS = 45_000
  * @returns the place it has wandered to, if anywhere.
  */
 export function useIdleErrand(seat: number, loose: boolean): Post | undefined {
+  const { visible, reducedMotion } = useRoomActivity()
   const [tick, setTick] = useState(0)
   useEffect(() => {
-    if (!loose || still()) return undefined
+    if (!loose || !visible || reducedMotion || still()) return undefined
     // Members do not all get up on the same beat: each seat's clock is offset.
     const timer = setInterval(() => { setTick(count => count + 1) }, WANDER_MS + ((seat + 1) % 5) * 1_700)
     return () => { clearInterval(timer) }
-  }, [seat, loose])
+  }, [seat, loose, visible, reducedMotion])
   return loose ? wanderOf(seat, tick) : undefined
 }

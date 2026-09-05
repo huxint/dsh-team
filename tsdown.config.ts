@@ -5,7 +5,7 @@
  *
  * The browser half runs inside the shell's frozen module table: a `require()`
  * the table cannot answer throws at boot, so every `@deepseek-ai` import in
- * `src/client` must be a platform module, the runtime store engine, or
+ * `src/client` must be a platform module, a shared store engine, or
  * type-only. The purity plugin below fails the BUILD instead of the page.
  */
 import { readFile } from 'node:fs/promises'
@@ -18,21 +18,12 @@ const ID = 'dsh-team'
 /** Specifiers the web shell shares into the frozen module table. */
 const PLATFORM_MODULES = [
   'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-store',
   '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-web-react',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-ui-attachment',
-  '@deepseek-ai/dsh-client-schema-form',
 ] as const
 
-/**
- * The runtime store-engine exemption: the runtime row is in the immediately
- * tier, so its factory is registered before any dependent bundle materializes
- * and the lazy table answers this require natively.
- */
-const RUNTIME_STORE = '@deepseek-ai/dsh-client-runtime/client'
-
-const CLIENT_EXTERNALS: readonly string[] = [...PLATFORM_MODULES, RUNTIME_STORE]
+const CLIENT_EXTERNALS: readonly string[] = [...PLATFORM_MODULES]
 
 /** Wire/type layers with no cross-plugin runtime identity, safe to inline. */
 const INLINE_SAFE = /^@deepseek-ai\/dsh-(host-apiproxy|session|llm|tools|brand|session-projection)(\/|$)/
@@ -62,6 +53,7 @@ const client: UserConfig = {
   format: 'cjs',
   platform: 'browser',
   sourcemap: true,
+  minify: true,
   clean: false,
   external: [...CLIENT_EXTERNALS],
   define: {

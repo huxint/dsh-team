@@ -24,11 +24,12 @@
 import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionId as SessionIdType } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-subagent'
+import { queueHostSubagentPrompt } from '@deepseek-ai/dsh-subagent/internal'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import {
   EMPTY_TEAM_VIEW, type TeamChain, type TeamMemberView, type TeamMessageView, type TeamRelation,
@@ -165,10 +166,10 @@ export class TeamService extends Service {
 
   /**
    * Adopt one continuable child into the team world while its scope is being
-   * composed. Called from the teammate setup contribution, which runs inside
-   * the child's unpublished creation window — on cold resume the child is
-   * already on the leader's roster, and only a child the roster has never seen
-   * can be the spawn currently in flight.
+   * composed. Called from the teammate setup contribution after the child is
+   * published — on cold resume the child is already on the leader's roster,
+   * and only a child the roster has never seen can be the spawn currently in
+   * flight.
    * @param child - the unpublished child agent.
    * @returns the membership facts, or undefined for a child outside any team.
    */
@@ -207,7 +208,12 @@ export class TeamService extends Service {
     }
     if (findByName(team, request.name) !== undefined) throw new TeamError('DUPLICATE_NAME', request.name)
     await this.assertEffortOffered(leader, request)
-    const agentOptions: AgentOptions = { ...request.model !== undefined ? { model: request.model } : {} }
+    const agentOptions: AgentOptions = {
+      ...request.model !== undefined ? { model: request.model } : {},
+      ...request.reasoningEffort !== undefined
+        ? { reasoningEffort: ReasoningEffortId(request.reasoningEffort) }
+        : {},
+    }
     const pending: PendingSpawn = {
       fact: {
         name: request.name,
@@ -443,7 +449,9 @@ export class TeamService extends Service {
   /** The durable view the leader's log folds to (the projection registry's cached cut). */
   private durableView(leader: Agent): TeamView {
     const registry = this.ctx.get('sessionProjections')
-    if (registry === undefined) return foldTeam(leader.session.events, this.config.maxRecentMessages)
+    if (registry === undefined) {
+      return foldTeam(leader.session.snapshotEvents(), this.config.maxRecentMessages)
+    }
     const value = registry.snapshot(leader.session).values.team
     return value ?? EMPTY_TEAM_VIEW
   }
@@ -594,11 +602,13 @@ export class TeamService extends Service {
       actor.leader.send(message, 'next-turn', true)
       return message.id
     }
-    return await this.ctx.subagents.followup(
+    return await queueHostSubagentPrompt(
+      this.ctx.subagents,
       actor.leader,
       SessionId(recipient.id),
       content,
-      { source, signal },
+      source,
+      signal,
     )
   }
 
