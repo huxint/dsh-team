@@ -1,5 +1,5 @@
 /**
- * The host's team projection drives the room, chat cards, and live roster.
+ * The host's team projection drives the world, chat cards, and live roster.
  * Following the leader while a teammate transcript is open keeps all three
  * surfaces current without folding session events again in the browser.
  */
@@ -79,9 +79,9 @@ export function apply(ctx: ClientContext): void {
   /**
    * The leader's own projection, watched while somebody else's transcript is
    * the one on screen. Reading a teammate attaches the follower to a session
-   * that folds no team of its own, so without this the room would freeze at the
+   * that folds no team of its own, so without this the world would freeze at the
    * last value it saw — and would go on drawing a team that had already been
-   * disbanded. Watching the leader keeps the room live, and lets it close.
+   * disbanded. Watching the leader keeps the world live, and lets it close.
    */
   let disposeLeader: (() => void) | null = null
 
@@ -90,7 +90,7 @@ export function apply(ctx: ClientContext): void {
     disposeLeader = null
   }
 
-  /** No team on screen: the room, and the tab it lives in, both go. */
+  /** No team on screen: the world, and the tab it lives in, both go. */
   const clear = (): void => {
     dropLeader()
     store.set(EMPTY)
@@ -105,7 +105,7 @@ export function apply(ctx: ClientContext): void {
     dropLeader()
     const binding = sessions.binding(leaderId)
     // The leader is unloaded: the team is still there, only nobody is folding
-    // it right now. The room holds what it last saw until the leader is back.
+    // it right now. The world holds what it last saw until the leader is back.
     if (binding === undefined) return
     const face = binding.session.projections.faceOf('team')
     const pull = (): void => {
@@ -125,7 +125,7 @@ export function apply(ctx: ClientContext): void {
    * The session in view folds no team of its own. While it belongs to the team
    * already on screen, keep showing that team and just move the "you are here"
    * marker — navigating into a member must not make the stage vanish under the
-   * cursor — and follow the leader from there, so the room closes with the team.
+   * cursor — and follow the leader from there, so the world closes with the team.
    */
   const holdOrClear = (current: SessionId): void => {
     const held = store.getSnapshot()
@@ -205,18 +205,18 @@ export function apply(ctx: ClientContext): void {
   /**
    * How many stages are on screen. A view tab renders once, but the seat is
    * keyed on the count: a re-mount that overlaps its own teardown must not
-   * hand the composer back under a live room.
+   * hand the composer back under a live world.
    */
-  const rooms = createSnapshotStore<number>(0)
+  const worlds = createSnapshotStore<number>(0)
 
   /** Take the composer seat for one mounted stage; the disposer gives it back. */
   const holdComposer = (): (() => void) => {
-    rooms.set(rooms.getSnapshot() + 1)
+    worlds.set(worlds.getSnapshot() + 1)
     let held = true
     return () => {
       if (!held) return
       held = false
-      rooms.set(Math.max(0, rooms.getSnapshot() - 1))
+      worlds.set(Math.max(0, worlds.getSnapshot() - 1))
     }
   }
 
@@ -237,7 +237,7 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('conversation.session.header.utilities', () => {
     let disposePresence: (() => void) | null = null
     const sync = (): void => {
-      const wanted = present(store.getSnapshot()) && rooms.getSnapshot() === 0
+      const wanted = present(store.getSnapshot()) && worlds.getSnapshot() === 0
       if (wanted === (disposePresence !== null)) return
       disposePresence?.()
       disposePresence = wanted ? ctx.slots.register({
@@ -250,16 +250,16 @@ export function apply(ctx: ClientContext): void {
     }
     sync()
     const disposeTeam = store.subscribe(sync)
-    const disposeRooms = rooms.subscribe(sync)
+    const disposeWorlds = worlds.subscribe(sync)
     return () => {
       disposeTeam()
-      disposeRooms()
+      disposeWorlds()
       disposePresence?.()
     }
   })
 
   /**
-   * The composer chain entry that empties the composer seat while a room is on
+   * The composer chain entry that empties the composer seat while a world is on
    * screen. Registering and withdrawing it is what re-runs the election — the
    * selector itself cannot see the active view — so the seat follows the tab
    * without the stage ever touching a node it does not own.
@@ -267,7 +267,7 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('conversation.composer', () => {
     let disposeSeat: (() => void) | null = null
     const sync = (): void => {
-      const wanted = rooms.getSnapshot() > 0
+      const wanted = worlds.getSnapshot() > 0
       if (wanted === (disposeSeat !== null)) return
       if (!wanted) {
         disposeSeat?.()
@@ -281,7 +281,7 @@ export function apply(ctx: ClientContext): void {
       }, ComposerAway)
     }
     sync()
-    const disposeStore = rooms.subscribe(sync)
+    const disposeStore = worlds.subscribe(sync)
     return () => {
       disposeStore()
       disposeSeat?.()

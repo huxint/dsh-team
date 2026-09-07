@@ -74,7 +74,7 @@ export function teamProjection(maxRecentMessages: number): TeamProjectionUnit {
     stateSchema: teamViewSchema,
     init: () => EMPTY_TEAM_VIEW,
     apply: (state, event) => applyTeamEvent(state, event, maxRecentMessages),
-    // The state is already the shape the room renders, so nothing is recomputed
+    // The state is already the shape the world renders, so nothing is recomputed
     // on the read side and there is no second shape to keep in step.
     wire: { viewSchema: teamViewSchema, view: state => state },
     // 1: initial shape (members/tasks/messages folded from tool result meta).

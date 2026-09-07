@@ -1,7 +1,7 @@
 {
   "name": "dsh-team",
   "version": "0.2.8",
-  "description": "Agent teams for DeepSeek Harness: named long-lived teammates over ctx.subagents, a shared task list, a member-to-member mailbox, virtual workspaces, and a live team room in the conversation view",
+  "description": "Agent teams for DeepSeek Harness: named long-lived teammates over ctx.subagents, a shared task list, a member-to-member mailbox, virtual workspaces, and an interactive voxel world in the conversation view",
   "license": "MIT",
   "author": "huxint",
   "repository": {

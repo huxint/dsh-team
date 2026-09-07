@@ -287,7 +287,7 @@ describe('following the leader from inside a teammate', () => {
     expect(panel()).toMatchObject({ leaderId: 'leader-1', currentId: 'child-1', members: [alice, bob] })
   })
 
-  it('closes the room, and its tab, when the leader disbands the team', () => {
+  it('closes the world, and its tab, when the leader disbands the team', () => {
     readTeammate()
     expect(panel().members).toEqual([alice])
 
@@ -410,7 +410,7 @@ describe('chat contributions', () => {
     expect(toolViews[0]!.face.hooks.team.getSnapshot().members).toEqual([])
   })
 
-  it('shows header presence for a live team and gives the room the full view', () => {
+  it('shows header presence for a live team and gives the world the full view', () => {
     expect(utilities).toEqual([])
     seedTeam()
     expect(utilities.map(entry => entry.id)).toEqual(['team-presence'])
@@ -451,11 +451,11 @@ describe('chat contributions', () => {
 describe('the composer seat', () => {
   beforeEach(() => { seedTeam() })
 
-  it('leaves the composer alone until a room says it is on screen', () => {
+  it('leaves the composer alone until a world says it is on screen', () => {
     expect(seats).toEqual([])
   })
 
-  it('empties the composer seat while a room holds it, and gives it back after', () => {
+  it('empties the composer seat while a world holds it, and gives it back after', () => {
     const release = tab().face.holdComposer()
     expect(seats).toHaveLength(1)
     expect(seats[0]!.select()).not.toBeNull()
@@ -469,7 +469,7 @@ describe('the composer seat', () => {
     expect(seats[0]!.priority).toBeGreaterThan(0)
   })
 
-  it('holds one seat for two overlapping rooms and frees it with the last', () => {
+  it('holds one seat for two overlapping worlds and frees it with the last', () => {
     const first = tab().face.holdComposer()
     const second = tab().face.holdComposer()
     expect(seats).toHaveLength(1)
@@ -480,7 +480,7 @@ describe('the composer seat', () => {
     expect(seats).toEqual([])
   })
 
-  it('ignores a disposer called twice, so the seat is not freed under a live room', () => {
+  it('ignores a disposer called twice, so the seat is not freed under a live world', () => {
     const release = tab().face.holdComposer()
     tab().face.holdComposer()
     release()

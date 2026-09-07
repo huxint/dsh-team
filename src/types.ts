@@ -20,7 +20,7 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
 
   /**
    * The unit's fold state IS its client value — the team fold already produces
-   * exactly what the room renders — so the state table carries the same type
+   * exactly what the world renders — so the state table carries the same type
    * and the unit's `wire.view` is the identity.
    */
   interface SessionProjectionStateMap {

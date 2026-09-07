@@ -1,114 +1,54 @@
 import { describe, expect, it } from 'vitest'
-import { Box3, BoxGeometry, Color, DirectionalLight, Group, Mesh, MeshBasicMaterial, Raycaster, Vector3, WebGLRenderTarget } from 'three'
-import { toPlan } from '../src/client/stagecraft.ts'
-import { deskOf, footprintOf } from '../src/client/room.ts'
-import { Office } from '../src/client/scene/office.ts'
-import { mix, paletteOf, parseColor, type Tokens } from '../src/client/scene/palette.ts'
-import { buildShell } from '../src/client/scene/shell.ts'
-import { Shop } from '../src/client/scene/kit.ts'
-import type { StationSpec } from '../src/client/scene/workstation.ts'
-import { batchMeshes } from '../src/client/scene/batching.ts'
+import { Mesh, Raycaster, Vector3 } from 'three'
+import { createIsland } from '../src/client/world/island.ts'
+import { deskStation } from '../src/client/world/layout.ts'
+import { disposeObjects } from '../src/client/world/renderer.ts'
 
-const tokens: Tokens = {
-  page: new Color('#fff'), ink: new Color('#0f1115'), hue: new Color('#4176e6'),
-  warm: new Color('#f59e0b'), leaf: new Color('#22c55e'), error: new Color('#ec1313'),
-}
-const palette = paletteOf(tokens)
-const station = (id: string, index = 0, count = 3): StationSpec => ({
-  id, seat: index - 1, desk: deskOf(index, count), app: 'code', screen: 'working', empty: false,
-})
+const desks = Array.from({ length: 9 }, (_, index) => deskStation(index))
 
-describe('scene colour', () => {
-  it('mixes tokens in sRGB to match the CSS crew', () => {
-    expect(mix(new Color('#000'), new Color('#fff'), 0.5).getHexString()).toBe('808080')
+describe('the physical island', () => {
+  it('builds a pool basin below the surrounding deck', () => {
+    const island = createIsland(desks)
+    island.group.updateMatrixWorld(true)
+    const floor = new Raycaster(new Vector3(-4.5, 2, 3), new Vector3(0, -1, 0)).intersectObject(island.group, true)[0]!
+    const deck = new Raycaster(new Vector3(-1.25, 2, 3), new Vector3(0, -1, 0)).intersectObject(island.group, true)[0]!
+    expect(floor.point.y).toBeLessThan(-0.9)
+    expect(deck.point.y).toBeGreaterThanOrEqual(0)
+    expect(deck.point.y - floor.point.y).toBeGreaterThan(1)
+    disposeObjects(island.group)
   })
 
-  it('reads modern percentage RGB theme tokens', () => {
-    expect(parseColor('rgb(100% 0% 50% / 0.9)')?.getHexString()).toBe('ff0080')
+  it('supports each stair tread at the height used by walking residents', () => {
+    const island = createIsland(desks)
+    island.group.updateMatrixWorld(true)
+    for (let step = 0; step < 16; step += 1) {
+      const z = -0.5 - (step + 0.5) * 5.5 / 16
+      const hit = new Raycaster(new Vector3(1.5, 5, z), new Vector3(0, -1, 0)).intersectObject(island.group, true)[0]!
+      expect(hit.point.y).toBeCloseTo((step + 1) * 0.2, 4)
+    }
+    disposeObjects(island.group)
   })
 
-  it('rejects malformed colours so the caller can report a missing theme', () => {
-    expect(parseColor('#12')).toBeUndefined()
-    expect(parseColor('rgb(1 2)')).toBeUndefined()
-    expect(parseColor('var(--missing)')).toBeUndefined()
+  it('leaves an opening through the terrace for the elevator cabin', () => {
+    const island = createIsland(desks)
+    island.group.updateMatrixWorld(true)
+    const shaft = new Raycaster(new Vector3(8, 3.35, -2), new Vector3(0, -1, 0))
+    expect(shaft.intersectObject(island.upper, true)).toHaveLength(0)
+    disposeObjects(island.group)
   })
 
-  it('selects evening lighting for a dark shell', () => {
-    const evening = paletteOf({ ...tokens, page: new Color('#151517'), ink: new Color('#e1e5ee') })
-    expect(evening.dark).toBe(true)
-    expect(palette.dark).toBe(false)
-    expect(evening.skyTop.getHex()).not.toBe(palette.skyTop.getHex())
-  })
-})
-
-describe('office geometry', () => {
-  it('batches nested furniture while preserving its world position and size', () => {
-    const group = new Group()
-    group.position.set(10, 1, 0)
-    group.scale.setScalar(2)
-    const pivot = new Group()
-    pivot.position.x = -1
-    pivot.rotation.z = Math.PI / 2
-    const paint = new MeshBasicMaterial()
-    pivot.add(new Mesh(new BoxGeometry(2, 1, 1), paint))
-    group.add(pivot)
-    const right = new Mesh(new BoxGeometry(1, 1, 1), paint)
-    right.position.x = 2
-    group.add(right)
-
-    batchMeshes(group)
-    const bounds = new Box3().setFromObject(group)
-    expect(bounds.min.toArray()).toEqual([7, -1, -1])
-    expect(bounds.max.toArray()).toEqual([15, 3, 1])
-    expect(group.children.filter(child => child instanceof Mesh)).toHaveLength(1)
-  })
-
-  it('shows the sky through a real opening in the back wall', () => {
-    const shop = new Shop(palette, false)
-    const shell = buildShell(shop)
-    shell.updateMatrixWorld(true)
-    const ray = new Raycaster(new Vector3(-1.05, 1.4, 2), new Vector3(0, 0, -1))
-    ray.layers.enableAll()
-    expect(ray.intersectObject(shell)[0]?.object.name).toBe('sky')
-    shop.dispose()
-  })
-
-  it('keeps the desk inside the floor footprint that walking routes avoid', () => {
-    const office = new Office(palette, { paint: false, still: true })
-    const spec = station('alice')
-    office.setStations([spec])
-    office.scene.updateMatrixWorld(true)
-    const desk = office.scene.getObjectByName('station:alice')!.getObjectByName('desk')!
-    const bounds = new Box3().setFromObject(desk)
-    const footprint = footprintOf(spec.desk)
-    const back = toPlan(bounds.min).y
-    const front = toPlan(bounds.max).y
-    expect(back).toBeGreaterThanOrEqual(footprint.y)
-    expect(front).toBeLessThanOrEqual(footprint.y + footprint.h)
-    office.dispose()
-  })
-
-  it('releases workstation materials when a teammate leaves', () => {
-    const office = new Office(palette, { paint: false, still: true })
-    office.setStations([station('alice')])
-    const chair = office.scene.getObjectByName('station:alice')!.getObjectByName('chairBack') as Mesh
-    const material = Array.isArray(chair.material) ? chair.material[0]! : chair.material
-    let disposals = 0
-    material.addEventListener('dispose', () => { disposals += 1 })
-    office.setStations([])
-    expect(disposals).toBe(1)
-    office.dispose()
-  })
-
-  it('releases shadow render targets when the room is unmounted', () => {
-    const office = new Office(palette, { paint: false, still: true })
-    let light: DirectionalLight | undefined
-    office.scene.traverse(object => { if (object instanceof DirectionalLight && object.castShadow) light = object })
-    const map = new WebGLRenderTarget(2, 2)
-    light!.shadow.map = map
-    let disposals = 0
-    map.addEventListener('dispose', () => { disposals += 1 })
-    office.dispose()
-    expect(disposals).toBe(1)
+  it('disposes every shared geometry and material once when the world closes', () => {
+    const island = createIsland(desks)
+    const resources = new Set<{ addEventListener: (type: 'dispose', callback: () => void) => void }>()
+    island.group.traverse(object => {
+      if (!(object instanceof Mesh)) return
+      resources.add(object.geometry)
+      for (const material of Array.isArray(object.material) ? object.material : [object.material]) resources.add(material)
+    })
+    const released = new Map<object, number>()
+    for (const resource of resources) resource.addEventListener('dispose', () => { released.set(resource, (released.get(resource) ?? 0) + 1) })
+    disposeObjects(island.group)
+    expect(released.size).toBe(resources.size)
+    expect([...released.values()].every(count => count === 1)).toBe(true)
   })
 })

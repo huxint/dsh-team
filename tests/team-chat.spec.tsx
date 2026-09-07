@@ -198,7 +198,7 @@ describe('team tool cards', () => {
     expect(view.inspect).toHaveBeenCalledTimes(1)
   })
 
-  it('links both ends of a message to the same sessions used by the room', () => {
+  it('links both ends of a message to the same sessions used by the world', () => {
     const view = toolCard('team_send', result('team_send', { to: 'Alice', message: 'Review this change' }, {
       meta: { team: 'message', messageId: 'm1', to: 'alice', text: 'Review this change' },
     }))

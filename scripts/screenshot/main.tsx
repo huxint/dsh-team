@@ -29,7 +29,7 @@ const team = createSnapshotStore(crewState)
 window.teamPreview = { team, sessions }
 
 function Preview() {
-  const [view, setView] = useState(params.get('view') ?? 'room')
+  const [view, setView] = useState(params.get('view') ?? 'world')
   const shared = {
     useTeam: (select: (snap: typeof crewState) => unknown) => select(useSyncExternalStore(team.subscribe, team.getSnapshot)),
     useSessions: (select: (snap: ReturnType<typeof sessionState>) => unknown) => select(useSyncExternalStore(sessions.subscribe, sessions.getSnapshot)),
@@ -38,7 +38,7 @@ function Preview() {
     t: translate,
   }
   return view === 'chat'
-    ? createElement(ChatPreview, { ...shared, english: params.get('locale') === 'en', onRoom: () => { setView('room') } })
+    ? createElement(ChatPreview, { ...shared, english: params.get('locale') === 'en', onWorld: () => { setView('world') } })
     : createElement(TeamStage, shared)
 }
 

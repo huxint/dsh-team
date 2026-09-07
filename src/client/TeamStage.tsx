@@ -1,30 +1,14 @@
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
-import { StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { PropsLocale, PropsRuntime, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { } from '@deepseek-ai/dsh-client-ui-session/client'
-import type { } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type {
-  TeamBoardEntryView, TeamMemberView, TeamMessageView, TeamTaskStatus, TeamTaskView,
-} from '../contract.ts'
-import {
-  IconTeamLeader16, IconTeamMailbox16, IconTeamMessage16,
-  IconTeamSend16, IconTeamTask16, IconTeamWorkspace16,
-} from './icons.tsx'
-import {
-  breakAt, deskOf, obstaclesOf, poseFor, spread, stationFor, visitAt,
-  type Desk, type Point, type Pose, type Post, type Touch,
-} from './room.ts'
-import { RoomScene } from './scene/RoomScene.tsx'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { TeamBoardEntryView, TeamMemberView, TeamMessageView, TeamTaskStatus, TeamTaskView } from '../contract.ts'
+import { IconTeamMailbox16, IconTeamMessage16, IconTeamSend16, IconTeamTask16, IconTeamWorkspace16 } from './icons.tsx'
 import { MemberAvatar } from './MemberAvatar.tsx'
-import type { StationSpec } from './scene/workstation.ts'
-import { appOf } from './scene/textures.ts'
-import { useIdleErrand, useWalk, type Facing } from './walk.ts'
-import {
-  Crew, accentOf, gearOf, hairOf, maskOf, outfitOf, shoeOf, skinOf, toneOf,
-} from './crew.tsx'
+import { WorldScene } from './world/WorldScene.tsx'
+import type { WorldMember } from './world/simulation.ts'
 import css from './TeamStage.module.css'
 
 /** The host’s projected team state; the client does not fold session events. */
@@ -54,25 +38,11 @@ export type TeamStageProps =
 
 type Translate = PropsLocale<'team'>['t']
 
-const LIVE_MESSAGES = 4
-
-const SPEECH_CHARS = 44
-
 const LOG_CHARS = 110
-
 const CREW_CHARS = 40
-
-const SCREEN_CHARS = 34
-
 const SHORT_ID = 6
-
-const ERRAND_MS = 9_000
-
 const COLUMNS: readonly TeamTaskStatus[] = ['pending', 'active', 'done']
-
-function meta(...parts: (string | undefined)[]): string {
-  return parts.filter(part => part !== undefined && part !== '').join(' · ')
-}
+type PanelId = 'feed' | 'workspace' | 'tasks'
 
 function clock(time: number): string {
   return new Date(time).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
@@ -83,283 +53,84 @@ function short(text: string, limit: number): string {
   return [...line].length <= limit ? line : `${[...line].slice(0, limit).join('')}…`
 }
 
-type PanelId = 'feed' | 'workspace' | 'tasks'
-
-function useVisit(latest: TeamMessageView | undefined): TeamMessageView | undefined {
-  const [live, setLive] = useState<string | undefined>(undefined)
-  // Settlements describe runtime completion, so they do not start a delivery.
-  const id = latest !== undefined && latest.kind !== 'settled' ? latest.messageId : undefined
-  useEffect(() => {
-    if (id === undefined) return undefined
-    setLive(id)
-    const timer = setTimeout(() => { setLive(undefined) }, ERRAND_MS)
-    return () => { clearTimeout(timer) }
-  }, [id])
-  return live !== undefined && live === id ? latest : undefined
-}
-
 export function TeamStage(props: TeamStageProps) {
   const state = props.useTeam(snapshot => snapshot)
   const { leaderId, members } = state
   const { t, holdComposer } = props
   useEffect(() => holdComposer?.(), [holdComposer])
   if (leaderId === undefined || members.length === 0) {
-    return (
-      <div className={`${css.theme} ${css.stage}`} data-agent-team-stage>
-        <p className={css.blankTitle}>{t('stage.noTeam')}</p>
-        <p className={css.blankHint}>{t('stage.noTeamHint')}</p>
-      </div>
-    )
+    return <div className={`${css.theme} ${css.stage}`} data-agent-team-stage><p className={css.blankTitle}>{t('stage.noTeam')}</p><p className={css.blankHint}>{t('stage.noTeamHint')}</p></div>
   }
-
-  return <TeamRoom key={leaderId} {...props} state={state as TeamPanelState & { leaderId: string }} />
+  return <TeamWorld key={leaderId} {...props} state={{ ...state, leaderId }} />
 }
 
-function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { leaderId: string } }) {
+function TeamWorld(props: TeamStageProps & { readonly state: TeamPanelState & { leaderId: string } }) {
   const { state, useSessions, openMember, openLeader, t } = props
-  const screenPrefix = useId()
+  const { leaderId, currentId, members, tasks, messages, board, boardAt } = state
   const drawerId = useId()
   const dock = useRef<HTMLElement>(null)
   const closeButton = useRef<HTMLButtonElement>(null)
   const sessionsById = useSessions((snapshot: SessionListState) => snapshot.byId)
-  const [focus, setFocus] = useState<string | undefined>(undefined)
-  const [panel, setPanel] = useState<PanelId | undefined>(undefined)
-
-  const { leaderId, currentId, members, tasks, messages, board, boardAt } = state
-  const visit = useVisit(messages[messages.length - 1])
-  const lastId = messages.length > 0 ? messages[messages.length - 1]!.messageId : undefined
-
-  const running = useMemo(
-    () => new Set(members
-      .filter(member => sessionsById[member.memberId as SessionId]?.running === true)
-      .map(member => member.memberId)),
-    [members, sessionsById],
-  )
-
-  const touched = useMemo(() => {
-    const out = new Map<string, Touch>()
-    for (const message of messages.slice(-LIVE_MESSAGES)) {
-      if (message.from !== undefined) out.set(message.from, message.kind === 'message' ? 'sent' : 'reported')
-      if (message.to !== undefined) out.set(message.to, 'got')
-    }
-    return out
-  }, [messages])
-
-  // Bounded feeds replace old rows; the newest message ID remains a reliable unread marker.
-  const seen = useRef<{ readonly leader: string | undefined; readonly id: string | undefined }>(
-    { leader: undefined, id: undefined },
-  )
+  const [focus, setFocus] = useState<string>()
+  const [panel, setPanel] = useState<PanelId>()
+  const lastId = messages.at(-1)?.messageId
+  const seen = useRef<{ leader: string | undefined; id: string | undefined }>({ leader: undefined, id: undefined })
   useEffect(() => {
-    if (seen.current.leader !== leaderId || panel === 'feed') {
-      seen.current = { leader: leaderId, id: lastId }
-    }
+    if (seen.current.leader !== leaderId || panel === 'feed') seen.current = { leader: leaderId, id: lastId }
   }, [panel, leaderId, lastId])
-  const freshMail = panel !== 'feed'
-    && seen.current.leader === leaderId
-    && lastId !== undefined
-    && lastId !== seen.current.id
+  const freshMail = panel !== 'feed' && seen.current.leader === leaderId && lastId !== undefined && lastId !== seen.current.id
 
-  // Hover changes focus frequently; keep roster geometry and task lookups stable.
   const plan = useMemo(() => {
     const names = new Map<string, string>([[leaderId, t('member.leader')]])
-    for (const member of members) names.set(member.memberId, member.name)
     const seats = new Map<string, number>([[leaderId, -1]])
-    members.forEach((member, index) => seats.set(member.memberId, index))
-
+    members.forEach((member, index) => { names.set(member.memberId, member.name); seats.set(member.memberId, index) })
+    const roster = [leaderId, ...members.map(member => member.memberId)]
+    const running = new Set(roster.filter(id => sessionsById[id as SessionId]?.running === true))
     const openCounts = new Map<string, number>()
     for (const task of tasks) {
-      if (task.status === 'done' || task.assigneeId === undefined) continue
-      openCounts.set(task.assigneeId, (openCounts.get(task.assigneeId) ?? 0) + 1)
+      if (task.status !== 'done' && task.assigneeId) openCounts.set(task.assigneeId, (openCounts.get(task.assigneeId) ?? 0) + 1)
     }
-    const openOf = (memberId: string): number => openCounts.get(memberId) ?? 0
-
-    const roster = [leaderId, ...members.map(member => member.memberId)]
-    const desks = new Map<string, Desk>(roster.map((id, index) => [id, deskOf(index, roster.length)]))
-
-    const homes = new Map<string, Post>()
-    const away = new Set<string>()
-    const stations: Post[] = []
-    let breaks = 0
-    for (const id of roster) {
-      const desk = desks.get(id) ?? deskOf(0, roster.length)
-      const station = id === leaderId
-        ? 'desk'
-        : stationFor(running.has(id), touched.get(id), openOf(id))
-      if (station === 'break') away.add(id)
-      stations.push(station === 'break' ? breakAt(breaks++) : desk)
-    }
-    const parted = spread(stations)
-    roster.forEach((id, index) => {
-      const post = stations[index]!
-      homes.set(id, { ...post, ...parted[index]! })
-    })
-
-    const lines = new Map<string, string>()
-    for (const id of roster) {
-      const active = tasks.find(task => task.assigneeId === id && task.status === 'active')
+    const openOf = (id: string): number => openCounts.get(id) ?? 0
+    const worldMembers: WorldMember[] = roster.map((id, index) => {
+      const member = members[index - 1]
+      const task = tasks.find(task => task.assigneeId === id && task.status === 'active')
         ?? tasks.find(task => task.assigneeId === id && task.status !== 'done')
-      if (active !== undefined) {
-        lines.set(id, short(active.title, SCREEN_CHARS))
-        continue
+      const request = messages.findLast(message => message.to === id)
+      return {
+        id, name: names.get(id)!, seat: index - 1, running: running.has(id),
+        task: task?.title ?? request?.text ?? t(running.has(id) ? 'screen.working' : 'world.freeTime'),
+        role: member ? [member.role, member.model, member.effort, t(member.relation === 'peer' ? 'relation.peer' : 'relation.managed')].filter(Boolean).join(' · ') : t('member.leader'),
       }
-      for (let index = messages.length - 1; index >= 0; index -= 1) {
-        const message = messages[index]
-        if (message?.to === id) {
-          lines.set(id, short(message.text, SCREEN_CHARS))
-          break
-        }
-      }
-    }
-    return { names, seats, openOf, roster, desks, homes, away, lines }
-  }, [leaderId, members, tasks, messages, running, touched, t])
-
-  const { names, seats, openOf, roster, desks, homes, away, lines } = plan
-
+    })
+    return { names, seats, roster, running, openOf, worldMembers }
+  }, [leaderId, members, tasks, messages, sessionsById, t])
+  const { names, seats, roster, running, openOf, worldMembers } = plan
   const openTasks = tasks.filter(task => task.status !== 'done').length
-  const leaderRunning = sessionsById[leaderId as SessionId]?.running === true
-
-  const errand = useMemo(() => errandOf(visit, leaderId, homes), [visit, leaderId, homes])
-  const visitOf = (id: string): Point | undefined =>
-    errand !== undefined && errand.fromId === id ? errand.meet : undefined
-  const turnOf = (id: string): Facing | undefined => {
-    if (errand === undefined) return undefined
-    if (errand.fromId === id) return errand.meet.x < errand.host.x ? 'right' : 'left'
-    if (errand.toId === id) return errand.meet.x < errand.host.x ? 'left' : 'right'
-    return undefined
-  }
-
+  const leaderRunning = running.has(leaderId)
   const closePanel = (): void => {
     dock.current?.querySelector<HTMLButtonElement>(`[data-panel-id="${panel}"]`)?.focus()
     setFocus(undefined)
     setPanel(undefined)
   }
-  const toggle = (id: PanelId): void => {
-    setFocus(undefined)
-    setPanel(current => current === id ? undefined : id)
-  }
-  useEffect(() => {
-    if (panel !== undefined) closeButton.current?.focus({ preventScroll: true })
-  }, [panel])
-  const titleOf = (id: PanelId): string =>
-    id === 'feed' ? t('stage.feed') : id === 'workspace' ? t('stage.workspace') : t('stage.board')
-
+  const toggle = (id: PanelId): void => { setFocus(undefined); setPanel(current => current === id ? undefined : id) }
+  useEffect(() => { if (panel !== undefined) closeButton.current?.focus({ preventScroll: true }) }, [panel])
+  const titleOf = (id: PanelId): string => t(id === 'feed' ? 'stage.feed' : id === 'workspace' ? 'stage.workspace' : 'stage.board')
   const open = useCallback((id: string): void => {
     if (id === leaderId) openLeader(leaderId)
     else openMember(leaderId, id)
   }, [leaderId, openLeader, openMember])
 
-  const stations = useMemo<readonly StationSpec[]>(() => roster.map((id, index) => {
-    const seat = index - 1
-    const live = seat < 0 ? leaderRunning : running.has(id)
-    const pose = poseFor(live, touched.get(id), openOf(id))
-    return {
-      id, seat,
-      desk: desks.get(id)!,
-      app: appOf(seat),
-      screen: pose === 'working' ? 'working' : lines.has(id) ? 'reading' : 'off',
-      empty: away.has(id) || errand?.fromId === id,
-    }
-  }), [roster, desks, leaderRunning, running, touched, openOf, lines, away, errand?.fromId])
-
-  const tileOf = (id: string, seat: number, member?: TeamMemberView) => {
-    const desk = desks.get(id) ?? deskOf(0, roster.length)
-    const home = homes.get(id) ?? desk
-    const live = seat < 0 ? leaderRunning : running.has(id)
-    const name = member?.name ?? t('member.leader')
-    return (
-      <MemberTile
-        key={id}
-        id={id}
-        name={name}
-        screenId={`${screenPrefix}-${id}`}
-        seat={seat}
-        home={home}
-        errand={visitOf(id)}
-        count={roster.length}
-        scale={home.scale}
-        relation={member?.relation ?? 'lead'}
-        role={member?.role}
-        current={currentId === id}
-        running={live}
-        pose={poseFor(live, touched.get(id), openOf(id))}
-        away={away.has(id)}
-        focused={focus === id}
-        talking={errand === undefined ? undefined : errand.fromId === id ? 'from' : errand.toId === id ? 'to' : undefined}
-        turn={turnOf(id)}
-        speech={errand !== undefined && errand.fromId === id ? short(errand.message.text, SPEECH_CHARS) : undefined}
-        tasks={openOf(id)}
-        label={member === undefined ? t('member.openLeader') : t('member.open', { name })}
-        title={member === undefined
-          ? t('member.leader')
-          : meta(
-            member.name,
-            member.role,
-            member.model,
-            member.effort,
-            member.relation === 'peer' ? t('relation.peer') : t('relation.managed'),
-          )}
-        onOpen={open}
-        onFocus={setFocus}
-        t={t}
-      />
-    )
-  }
-
-  return (
-    <div className={`${css.theme} ${css.stage}`} data-agent-team-stage onKeyDown={event => {
-      if (event.key !== 'Escape' || panel === undefined) return
-      closePanel()
-    }}>
-      <div className={css.scene}>
-        <RoomScene label={t('stage.room')} hint={t('stage.sceneHint')} fallbackLabel={t('stage.rosterView')} stations={stations} controls={
+  return (<div className={`${css.theme} ${css.stage}`} data-agent-team-stage onKeyDown={event => {
+    if (event.key === 'Escape' && panel !== undefined) closePanel()
+  }}>
+    <div className={css.scene}>
+      <WorldScene members={worldMembers} currentId={currentId} leaderId={leaderId} focus={focus} message={messages.at(-1)} onOpen={open} onFocus={setFocus} t={t} controls={
         <nav ref={dock} className={css.dock} aria-label={t('stage.dock')}>
-          <DockButton
-            controls={drawerId}
-            id="feed"
-            label={t('stage.feed')}
-            count={messages.length}
-            active={panel === 'feed'}
-            fresh={freshMail}
-            onToggle={toggle}
-          >
-            <IconTeamMailbox16 size={15} />
-          </DockButton>
-          <DockButton
-            controls={drawerId}
-            id="workspace"
-            label={t('stage.workspace')}
-            count={board.length}
-            active={panel === 'workspace'}
-            fresh={false}
-            onToggle={toggle}
-          >
-            <IconTeamWorkspace16 size={15} />
-          </DockButton>
-          <DockButton
-            controls={drawerId}
-            id="tasks"
-            label={t('stage.board')}
-            count={openTasks}
-            active={panel === 'tasks'}
-            fresh={false}
-            onToggle={toggle}
-          >
-            <IconTeamTask16 size={15} />
-          </DockButton>
+          <DockButton controls={drawerId} id="feed" label={t('stage.feed')} count={messages.length} active={panel === 'feed'} fresh={freshMail} onToggle={toggle}><IconTeamMailbox16 size={15} /></DockButton>
+          <DockButton controls={drawerId} id="workspace" label={t('stage.workspace')} count={board.length} active={panel === 'workspace'} fresh={false} onToggle={toggle}><IconTeamWorkspace16 size={15} /></DockButton>
+          <DockButton controls={drawerId} id="tasks" label={t('stage.board')} count={openTasks} active={panel === 'tasks'} fresh={false} onToggle={toggle}><IconTeamTask16 size={15} /></DockButton>
         </nav>
-        }>
-          <div className={css.screenDescriptions}>
-            {stations.map(station => (
-              <span key={station.id} data-desk={station.id} data-screen={station.screen} data-empty={station.empty ? 'true' : undefined}>
-                <span id={`${screenPrefix}-${station.id}`} data-app={station.app}>
-                  {lines.get(station.id) ?? t(station.screen === 'working' ? 'screen.working' : 'status.idle')}
-                </span>
-              </span>
-            ))}
-          </div>
-          {roster.map((id, index) => tileOf(id, index - 1, members[index - 1]))}
-        </RoomScene>
-
+      } />
         {panel !== undefined && (
           <aside id={drawerId} className={css.drawer} data-panel={panel} aria-label={titleOf(panel)}>
             <header className={css.drawerHead}>
@@ -472,7 +243,6 @@ function DockButton(props: {
       type="button"
       className={css.dockButton}
       aria-label={label}
-      title={label}
       aria-pressed={active}
       aria-expanded={active}
       aria-controls={active ? controls : undefined}
@@ -486,142 +256,6 @@ function DockButton(props: {
     </button>
   )
 }
-
-interface Errand {
-  readonly message: TeamMessageView
-  readonly fromId: string
-  readonly toId: string
-  readonly host: Post
-  readonly meet: Point
-}
-
-function errandOf(
-  message: TeamMessageView | undefined,
-  leaderId: string,
-  homes: ReadonlyMap<string, Post>,
-): Errand | undefined {
-  if (message === undefined) return undefined
-  const fromId = message.from ?? leaderId
-  const toId = message.to ?? leaderId
-  const from = homes.get(fromId)
-  const host = homes.get(toId)
-  if (from === undefined || host === undefined || fromId === toId) return undefined
-  return { message, fromId, toId, host, meet: visitAt(host, from.x) }
-}
-
-const MemberTile = memo(function MemberTile(props: {
-  readonly id: string
-  readonly name: string
-  readonly screenId: string
-  readonly seat: number
-  readonly home: Post
-  readonly errand: Point | undefined
-  readonly count: number
-  readonly scale: number
-  readonly relation: 'peer' | 'managed' | 'lead'
-  readonly role: string | undefined
-  readonly current: boolean
-  readonly running: boolean
-  readonly pose: Pose
-  readonly away: boolean
-  readonly focused: boolean
-  readonly talking: 'from' | 'to' | undefined
-  readonly turn: Facing | undefined
-  readonly speech: string | undefined
-  readonly tasks: number
-  readonly label: string
-  readonly title: string
-  readonly onOpen: (id: string) => void
-  readonly onFocus: (memberId: string | undefined) => void
-  readonly t: Translate
-}) {
-  const {
-    id, name, screenId, seat, home, errand, count, scale, relation, role, current, running, pose, away,
-    focused, talking, turn, speech, tasks, label, title, onOpen, onFocus, t,
-  } = props
-  const obstacles = useMemo(
-    () => obstaclesOf(Array.from({ length: count }, (_, index) => deskOf(index, count))),
-    [count],
-  )
-  // The leader stays at its desk so deliveries have a stationary destination.
-  const loose = seat >= 0 && pose === 'idle' && errand === undefined && talking === undefined
-  const wander = useIdleErrand(seat, loose)
-  const spot: Point = errand ?? (loose ? wander ?? home : home)
-  const walk = useWalk(home, spot, obstacles, scale, id)
-  const mask = maskOf(seat)
-  const outfit = outfitOf(seat)
-  const shoes = shoeOf(seat)
-  const seated = !walk.walking && !away && talking === undefined && wander === undefined
-  const facing = walk.walking ? walk.facing : turn ?? (seated ? 'back' : 'front')
-  const relationLabel = relation === 'lead'
-    ? undefined
-    : relation === 'peer' ? t('relation.peer') : t('relation.managed')
-  return (
-    <button
-      type="button"
-      ref={walk.ref}
-      className={css.person}
-      style={accentOf(seat)}
-      onClick={() => { onOpen(id) }}
-      onMouseEnter={() => { onFocus(id) }}
-      onMouseLeave={() => { onFocus(undefined) }}
-      onFocus={() => { onFocus(id) }}
-      onBlur={() => { onFocus(undefined) }}
-      aria-label={label}
-      aria-current={current}
-      aria-describedby={screenId}
-      title={title}
-      data-member={id}
-      data-relation={relation}
-      data-species={mask}
-      data-pose={pose}
-      data-away={away ? 'true' : undefined}
-      data-walk={walk.walking ? 'true' : undefined}
-      data-facing={facing}
-      data-running={running ? 'true' : undefined}
-      data-focus={focused ? 'true' : undefined}
-      data-talking={talking}
-    >
-      {speech !== undefined && !walk.walking && (
-        <span className={css.speech} data-speech={id}>{speech}</span>
-      )}
-      {talking === 'to' && !walk.walking && <span className={css.listening} aria-hidden>···</span>}
-      {pose === 'idle' && !away && talking === undefined && <span className={css.doze} aria-hidden>zZ</span>}
-
-      <span className={css.body}>
-        <Crew
-          kind={mask}
-          back={facing === 'back' || facing === 'away'}
-          outfit={outfit}
-          shoes={shoes}
-          hair={hairOf(seat)}
-          gear={gearOf(seat)}
-          tone={toneOf(seat)}
-          skin={skinOf(seat)}
-          className={css.figure}
-        />
-        {relation === 'lead' && (
-          <span className={css.crown} aria-hidden>
-            <IconTeamLeader16 size={12} />
-          </span>
-        )}
-        {tasks > 0 && <span className={css.load} title={t('feed.open', { count: tasks })}>{tasks}</span>}
-      </span>
-
-      <span className={css.plate}>
-        <span className={css.plateName}>
-          <span className={css.state} title={t(running ? 'status.running' : 'status.idle')}>
-            <StateDot state={running ? 'ongoing' : 'done'} size={7} />
-          </span>
-          <span className={css.plateText}>{name}</span>
-        </span>
-        {(role !== undefined || relationLabel !== undefined) && (
-          <span className={css.plateMeta}>{meta(role, relationLabel)}</span>
-        )}
-      </span>
-    </button>
-  )
-})
 
 interface CrewRow {
   readonly id: string

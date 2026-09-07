@@ -1,10 +1,3 @@
-/**
- * The team state the README screenshot mounts the room over: a mid-flight
- * team with every posture the room can draw — the leader working, two
- * teammates mid-turn, one with mail on its plate, one with open work — and
- * ledgers worth opening behind the dock. Timestamps are fixed so the shot
- * is reproducible across machines and CI runs.
- */
 import type { TeamPanelState } from '../../src/client/TeamStage.tsx'
 
 /** One teammate as the panel state carries it. */
@@ -20,13 +13,7 @@ const member = (
   ...extra,
 })
 
-/**
- * The snapshot. `leaderId`/`currentId` name the session whose log owns the
- * team; the shelf state says how many members are mid-turn. The newest row
- * being a settlement is deliberate: nothing is carried across the floor at
- * the moment of the shot, so every member stands exactly where its own
- * deadline put it.
- */
+/** Fixed team and timestamps keep scene captures reproducible. */
 export const crewState: TeamPanelState = {
   leaderId: 'leader-1',
   currentId: 'leader-1',

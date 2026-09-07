@@ -21,14 +21,20 @@ const { values, positionals } = parseArgs({
     width: { type: 'string', default: '1500' },
     height: { type: 'string', default: '760' },
     verify: { type: 'boolean', default: false },
-    view: { type: 'string', default: 'room' },
+    benchmark: { type: 'boolean', default: false },
+    gpu: { type: 'boolean', default: false },
+    time: { type: 'string', default: 'day' },
+    view: { type: 'string', default: 'world' },
   },
 })
 const output = resolve(positionals[0] ?? join(root, 'screenshots/image.png'))
 const viewport = { width: Number(values.width), height: Number(values.height) }
 assert(['light', 'dark'].includes(values.theme), 'theme must be light or dark')
 assert(['zh', 'en'].includes(values.locale), 'locale must be zh or en')
-assert(['room', 'chat'].includes(values.view), 'view must be room or chat')
+assert(['world', 'chat'].includes(values.view), 'view must be world or chat')
+assert(!values.benchmark || values.view === 'world', 'benchmark requires the world view')
+assert(['day', 'dusk', 'night'].includes(values.time), 'time must be day, dusk, or night')
+assert(values.time === 'day' || values.view === 'world', 'time requires the world view')
 assert(values.panel === undefined || ['feed', 'workspace', 'tasks'].includes(values.panel), 'unknown panel')
 assert(Object.values(viewport).every(size => Number.isInteger(size) && size >= 240), 'viewport dimensions must be at least 240')
 
@@ -59,7 +65,7 @@ try {
   browser = await chromium.launch({
     executablePath,
     headless: true,
-    args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--font-render-hinting=none', '--disable-lcd-text', '--force-color-profile=srgb', '--hide-scrollbars'],
+    args: ['--no-sandbox', ...values.gpu ? [] : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'], '--font-render-hinting=none', '--disable-lcd-text', '--force-color-profile=srgb', '--hide-scrollbars'],
   })
   const page = await browser.newPage({ viewport, deviceScaleFactor: 2, reducedMotion: 'reduce', timezoneId: 'UTC', locale: values.locale === 'zh' ? 'zh-CN' : 'en-US' })
   const errors = []
@@ -68,9 +74,19 @@ try {
   const url = `http://127.0.0.1:${server.address().port}/?theme=${values.theme}&locale=${values.locale}&view=${values.view}`
   await page.goto(url, { waitUntil: 'networkidle' })
   await page.evaluate(() => document.fonts.ready)
-  await page.waitForSelector(values.view === 'room' ? '[data-renderer="webgl"] [data-room-ready="true"]' : '[data-team-tool]')
+  await page.waitForSelector(values.view === 'world' ? '[data-renderer="webgl"] [data-world-ready="true"]' : '[data-team-tool]')
   const settle = () => page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))))
   await settle()
+  if (values.time !== 'day') {
+    const english = values.locale === 'en'
+    await page.getByRole('button', { name: english ? 'Adjust island time' : '调整岛上时间', exact: true }).click()
+    const preset = values.time === 'night' ? (english ? 'Night' : '夜晚') : (english ? 'Dusk' : '日落')
+    await page.getByRole('button', { name: preset, exact: true }).click()
+    await page.keyboard.press('Escape')
+    await page.evaluate(() => document.activeElement?.blur())
+    await page.mouse.move(0, 0)
+    await settle()
+  }
   if (values.panel) {
     await page.locator(`[data-panel-id="${values.panel}"]`).click()
     await page.locator(`[data-panel="${values.panel}"]`).waitFor()
@@ -81,8 +97,12 @@ try {
   console.log(`Wrote ${output} (${statSync(output).size} bytes)`)
 
   if (values.verify) {
-    const { verifyRoom, verifyChat } = await import('./verify.mjs')
-    await (values.view === 'room' ? verifyRoom : verifyChat)(page, { output, url, settle })
+    const { verifyWorld, verifyChat } = await import('./verify.mjs')
+    await (values.view === 'world' ? verifyWorld : verifyChat)(page, { output, url, settle })
+  }
+  if (values.benchmark) {
+    const { benchmarkWorld } = await import('./verify.mjs')
+    await benchmarkWorld(page, { url, settle })
   }
   assert.deepEqual(errors, [], 'Browser errors')
 } finally {

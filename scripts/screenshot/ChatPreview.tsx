@@ -31,8 +31,8 @@ const calls: Array<{ name: string, block: ToolCallBlock }> = [
   },
 ]
 
-export function ChatPreview(props: Omit<TeamPresenceProps, 'sessionId'> & { onRoom: () => void, english: boolean }) {
-  const { onRoom, english, ...teamProps } = props
+export function ChatPreview(props: Omit<TeamPresenceProps, 'sessionId'> & { onWorld: () => void, english: boolean }) {
+  const { onWorld, english, ...teamProps } = props
   return (
     <main className="chat-preview">
       <header className="chat-preview-header">
@@ -43,7 +43,7 @@ export function ChatPreview(props: Omit<TeamPresenceProps, 'sessionId'> & { onRo
         <nav className="chat-preview-tabs">
           <span aria-current="page">{english ? 'Chat' : '对话'}</span>
           <span>{english ? 'Trajectory' : '轨迹'}</span>
-          <button type="button" onClick={onRoom}>{english ? 'Agent team' : 'Agent 团队'}</button>
+          <button type="button" onClick={onWorld}>{english ? 'Tiny world' : '微型世界'}</button>
         </nav>
       </header>
       <div className="chat-preview-scroll">
