@@ -21,12 +21,14 @@ const { values, positionals } = parseArgs({
     width: { type: 'string', default: '1500' },
     height: { type: 'string', default: '760' },
     verify: { type: 'boolean', default: false },
+    view: { type: 'string', default: 'room' },
   },
 })
 const output = resolve(positionals[0] ?? join(root, 'screenshots/image.png'))
 const viewport = { width: Number(values.width), height: Number(values.height) }
 assert(['light', 'dark'].includes(values.theme), 'theme must be light or dark')
 assert(['zh', 'en'].includes(values.locale), 'locale must be zh or en')
+assert(['room', 'chat'].includes(values.view), 'view must be room or chat')
 assert(values.panel === undefined || ['feed', 'workspace', 'tasks'].includes(values.panel), 'unknown panel')
 assert(Object.values(viewport).every(size => Number.isInteger(size) && size >= 240), 'viewport dimensions must be at least 240')
 
@@ -63,10 +65,10 @@ try {
   const errors = []
   page.on('pageerror', error => { errors.push(error.message) })
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
-  const url = `http://127.0.0.1:${server.address().port}/?theme=${values.theme}&locale=${values.locale}`
+  const url = `http://127.0.0.1:${server.address().port}/?theme=${values.theme}&locale=${values.locale}&view=${values.view}`
   await page.goto(url, { waitUntil: 'networkidle' })
   await page.evaluate(() => document.fonts.ready)
-  await page.waitForSelector('[data-renderer="webgl"] [data-room-ready="true"]')
+  await page.waitForSelector(values.view === 'room' ? '[data-renderer="webgl"] [data-room-ready="true"]' : '[data-team-tool]')
   const settle = () => page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))))
   await settle()
   if (values.panel) {
@@ -79,8 +81,8 @@ try {
   console.log(`Wrote ${output} (${statSync(output).size} bytes)`)
 
   if (values.verify) {
-    const { verifyRoom } = await import('./verify.mjs')
-    await verifyRoom(page, { output, url, settle })
+    const { verifyRoom, verifyChat } = await import('./verify.mjs')
+    await (values.view === 'room' ? verifyRoom : verifyChat)(page, { output, url, settle })
   }
   assert.deepEqual(errors, [], 'Browser errors')
 } finally {

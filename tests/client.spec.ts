@@ -121,6 +121,8 @@ let sessions: FakeSessions
 let tabs: Tab[]
 /** The composer-chain contributions currently registered. */
 let seats: Seat[]
+let utilities: Tab[]
+let toolViews: Array<{ key: string, face: Injected }>
 let teardown: () => void
 
 /** Mount the plugin body over the doubles and watch what it contributes. */
@@ -128,6 +130,8 @@ function mount(): void {
   sessions = new FakeSessions()
   tabs = []
   seats = []
+  utilities = []
+  toolViews = []
   const disposers: Array<() => void> = []
   const ctx = {
     effect: (run: () => unknown, _label: string) => {
@@ -137,20 +141,27 @@ function mount(): void {
     locale: { register: () => () => {}, bind: () => (key: string) => key },
     sessions,
     slots: {
-      inject: (_name: string, install: () => () => void) => {
-        const dispose = install()
+      inject: (_name: string, install: () => (() => void) | Array<() => void>) => {
+        const effect = install()
+        const dispose = typeof effect === 'function' ? effect : () => { for (const release of [...effect].reverse()) release() }
         disposers.push(dispose)
         return dispose
       },
       register: (spec: {
         name: string
         id?: string
+        key?: string
         order?: number
         priority?: number
         label?: () => string
         select?: () => unknown
         inject?: () => Injected
       }) => {
+        if (spec.name === 'tool.call.toolview') {
+          const entry = { key: spec.key!, face: spec.inject?.() as Injected }
+          toolViews.push(entry)
+          return () => { toolViews.splice(toolViews.indexOf(entry), 1) }
+        }
         if (spec.name === 'conversation.composer') {
           const seat: Seat = { priority: spec.priority ?? 0, select: spec.select ?? (() => null) }
           seats.push(seat)
@@ -165,10 +176,11 @@ function mount(): void {
           label: spec.label ?? (() => ''),
           face: spec.inject?.() as Injected,
         }
-        tabs.push(tab)
+        const entries = spec.name === 'conversation.session.header.utilities' ? utilities : tabs
+        entries.push(tab)
         return () => {
-          const at = tabs.indexOf(tab)
-          if (at >= 0) tabs.splice(at, 1)
+          const at = entries.indexOf(tab)
+          if (at >= 0) entries.splice(at, 1)
         }
       },
     },
@@ -386,6 +398,53 @@ describe('the view tab', () => {
     sessions.seed('child-1', teamOf([]))
     sessions.list.set({ current: 'child-1' })
     expect(tab().face.hooks.team.getSnapshot().currentId).toBe('child-1')
+  })
+})
+
+describe('chat contributions', () => {
+  it('registers a card for every team tool, including calls before a team exists', () => {
+    expect(toolViews.map(entry => entry.key)).toEqual([
+      'team_spawn', 'team_send', 'team_task', 'team_relation',
+      'team_dismiss', 'team_list', 'team_note', 'team_board',
+    ])
+    expect(toolViews[0]!.face.hooks.team.getSnapshot().members).toEqual([])
+  })
+
+  it('shows header presence for a live team and gives the room the full view', () => {
+    expect(utilities).toEqual([])
+    seedTeam()
+    expect(utilities.map(entry => entry.id)).toEqual(['team-presence'])
+
+    const release = tab().face.holdComposer()
+    expect(utilities).toEqual([])
+    release()
+    expect(utilities.map(entry => entry.id)).toEqual(['team-presence'])
+  })
+
+  it('withdraws live presence on disband while preserving the historical call renderers', () => {
+    seedTeam()
+    const cards = [...toolViews]
+    sessions.faces.get('leader-1')!.set(teamOf([]))
+
+    expect(utilities).toEqual([])
+    expect(toolViews).toEqual(cards)
+    expect(toolViews[0]!.face.hooks.team.getSnapshot().members).toEqual([])
+  })
+
+  it('removes the avatars when navigating into an unrelated conversation', () => {
+    seedTeam()
+    sessions.seed('other')
+    sessions.list.set({ current: 'other' })
+
+    expect(utilities).toEqual([])
+  })
+
+  it('releases every chat contribution on plugin unload', () => {
+    seedTeam()
+    teardown()
+
+    expect(utilities).toEqual([])
+    expect(toolViews).toEqual([])
   })
 })
 

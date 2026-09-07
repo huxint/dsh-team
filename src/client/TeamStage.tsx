@@ -10,14 +10,15 @@ import type {
   TeamBoardEntryView, TeamMemberView, TeamMessageView, TeamTaskStatus, TeamTaskView,
 } from '../contract.ts'
 import {
-  IconTeam16, IconTeamLeader16, IconTeamMailbox16, IconTeamMessage16,
-  IconTeamPeer16, IconTeamSend16, IconTeamTask16, IconTeamWorkspace16,
+  IconTeamLeader16, IconTeamMailbox16, IconTeamMessage16,
+  IconTeamSend16, IconTeamTask16, IconTeamWorkspace16,
 } from './icons.tsx'
 import {
   breakAt, deskOf, obstaclesOf, poseFor, spread, stationFor, visitAt,
   type Desk, type Point, type Pose, type Post, type Touch,
 } from './room.ts'
 import { RoomScene } from './scene/RoomScene.tsx'
+import { MemberAvatar } from './MemberAvatar.tsx'
 import type { StationSpec } from './scene/workstation.ts'
 import { appOf } from './scene/textures.ts'
 import { useIdleErrand, useWalk, type Facing } from './walk.ts'
@@ -77,34 +78,12 @@ function clock(time: number): string {
   return new Date(time).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
 }
 
-function initial(name: string): string {
-  return [...name][0]?.toUpperCase() ?? '?'
-}
-
 function short(text: string, limit: number): string {
   const line = text.replace(/\s+/gu, ' ').trim()
   return [...line].length <= limit ? line : `${[...line].slice(0, limit).join('')}…`
 }
 
 type PanelId = 'feed' | 'workspace' | 'tasks'
-
-const Cameo = memo(function Cameo(props: { readonly seat: number | undefined, readonly name: string }) {
-  const { seat, name } = props
-  if (seat === undefined) return <span className={css.discGlyph}>{initial(name)}</span>
-  return (
-    <span className={css.cameo} data-cameo-species={maskOf(seat)} style={accentOf(seat)}>
-      <Crew
-        kind={maskOf(seat)}
-        className={css.cameoCrew}
-        portrait
-        hair={hairOf(seat)}
-        gear={gearOf(seat)}
-        tone={toneOf(seat)}
-        skin={skinOf(seat)}
-      />
-    </span>
-  )
-})
 
 function useVisit(latest: TeamMessageView | undefined): TeamMessageView | undefined {
   const [live, setLive] = useState<string | undefined>(undefined)
@@ -126,7 +105,7 @@ export function TeamStage(props: TeamStageProps) {
   useEffect(() => holdComposer?.(), [holdComposer])
   if (leaderId === undefined || members.length === 0) {
     return (
-      <div className={css.stage} data-agent-team-stage>
+      <div className={`${css.theme} ${css.stage}`} data-agent-team-stage>
         <p className={css.blankTitle}>{t('stage.noTeam')}</p>
         <p className={css.blankHint}>{t('stage.noTeamHint')}</p>
       </div>
@@ -236,7 +215,6 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
 
   const { names, seats, openOf, roster, desks, homes, away, lines } = plan
 
-  const peers = members.filter(member => member.relation === 'peer')
   const openTasks = tasks.filter(task => task.status !== 'done').length
   const leaderRunning = sessionsById[leaderId as SessionId]?.running === true
 
@@ -328,48 +306,12 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
   }
 
   return (
-    <div className={css.stage} data-agent-team-stage onKeyDown={event => {
+    <div className={`${css.theme} ${css.stage}`} data-agent-team-stage onKeyDown={event => {
       if (event.key !== 'Escape' || panel === undefined) return
       closePanel()
     }}>
-      <header className={css.bar}>
-        <div className={css.brand}>
-          <span className={css.brandMark} aria-hidden><IconTeam16 size={22} /></span>
-          <div>
-            <span className={css.eyebrow}>{t('stage.eyebrow')}</span>
-            <h2 className={css.barTitle}>{t('stage.title')}</h2>
-          </div>
-        </div>
-        <span className={css.barHint} title={peers.length > 1 ? t('stage.peerRing') : t('stage.roomHint')}>
-          <IconTeamPeer16 size={14} />
-          <span>{peers.length > 1 ? t('stage.peerRing') : t('stage.roomHint')}</span>
-        </span>
-        <div className={css.barStats}>
-          <span className={css.stat}><IconTeam16 size={13} />{t('stage.members', { count: members.length + 1 })}</span>
-          <span className={`${css.stat} ${running.size > 0 || leaderRunning ? css.statLive : ''}`}>
-            <span className={css.statDot} aria-hidden />
-            {running.size > 0 || leaderRunning ? t('stage.running', { count: running.size + Number(leaderRunning) }) : t('stage.idle')}
-          </span>
-          {tasks.length > 0 && (
-            <span className={css.stat}><IconTeamTask16 size={13} />{t('stage.tasks', { open: openTasks, total: tasks.length })}</span>
-          )}
-        </div>
-      </header>
-
       <div className={css.scene}>
-        <RoomScene label={t('stage.room')} hint={t('stage.sceneHint')} fallbackLabel={t('stage.rosterView')} stations={stations}>
-          <div className={css.screenDescriptions}>
-            {stations.map(station => (
-              <span key={station.id} data-desk={station.id} data-screen={station.screen} data-empty={station.empty ? 'true' : undefined}>
-                <span id={`${screenPrefix}-${station.id}`} data-app={station.app}>
-                  {lines.get(station.id) ?? t(station.screen === 'working' ? 'screen.working' : 'status.idle')}
-                </span>
-              </span>
-            ))}
-          </div>
-          {roster.map((id, index) => tileOf(id, index - 1, members[index - 1]))}
-        </RoomScene>
-
+        <RoomScene label={t('stage.room')} hint={t('stage.sceneHint')} fallbackLabel={t('stage.rosterView')} stations={stations} controls={
         <nav ref={dock} className={css.dock} aria-label={t('stage.dock')}>
           <DockButton
             controls={drawerId}
@@ -405,6 +347,18 @@ function TeamRoom(props: TeamStageProps & { readonly state: TeamPanelState & { l
             <IconTeamTask16 size={15} />
           </DockButton>
         </nav>
+        }>
+          <div className={css.screenDescriptions}>
+            {stations.map(station => (
+              <span key={station.id} data-desk={station.id} data-screen={station.screen} data-empty={station.empty ? 'true' : undefined}>
+                <span id={`${screenPrefix}-${station.id}`} data-app={station.app}>
+                  {lines.get(station.id) ?? t(station.screen === 'working' ? 'screen.working' : 'status.idle')}
+                </span>
+              </span>
+            ))}
+          </div>
+          {roster.map((id, index) => tileOf(id, index - 1, members[index - 1]))}
+        </RoomScene>
 
         {panel !== undefined && (
           <aside id={drawerId} className={css.drawer} data-panel={panel} aria-label={titleOf(panel)}>
@@ -728,7 +682,7 @@ function MessageFeed(props: {
               onMouseLeave={() => { onFocus(undefined) }}
             >
               <span className={css.cameoDot} aria-hidden>
-                <Cameo seat={row.seat} name={row.name} />
+                <MemberAvatar seat={row.seat} name={row.name} />
               </span>
               <span className={css.crewName}>{row.name}</span>
               <span className={css.crewState} data-state={row.running ? 'running' : 'idle'}>
@@ -795,7 +749,7 @@ const LogRow = memo(function LogRow(props: {
       onMouseLeave={() => { onFocus(undefined) }}
     >
       <span className={css.logAvatar} aria-hidden>
-        <Cameo seat={message.from === undefined ? -1 : seats.get(message.from)} name={author} />
+        <MemberAvatar seat={message.from === undefined ? -1 : seats.get(message.from)} name={author} />
       </span>
       <div className={css.logBody}>
         <span className={css.logHead}>
@@ -843,7 +797,7 @@ const NoteCard = memo(function NoteCard(props: {
       <span className={css.noteFoot}>
         <span className={css.noteAuthor}>
           <span className={css.cameoDot} aria-hidden>
-            <Cameo seat={seats.get(entry.authorId)} name={entry.authorName} />
+            <MemberAvatar seat={seats.get(entry.authorId)} name={entry.authorName} />
           </span>
           {entry.authorName}
         </span>
@@ -884,7 +838,7 @@ function TaskColumn(props: {
             <span className={css.cardWho}>
               {task.assigneeId !== undefined && (
                 <span className={css.cameoDot} aria-hidden>
-                  <Cameo
+                  <MemberAvatar
                     seat={seats.get(task.assigneeId)}
                     name={names.get(task.assigneeId) ?? task.assigneeId}
                   />

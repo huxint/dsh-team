@@ -3,17 +3,17 @@ import { Vector3 } from 'three'
 import { Stagecraft, toPlan, toWorld } from '../src/client/stagecraft.ts'
 
 const corners = [
-  [-5.24, -0.28, 3.58], [5.24, -0.28, 3.58],
-  [-5.24, -0.28, -3.74], [5.24, -0.28, -3.74],
-  [-5.2, 3.4, -3.7], [5.2, 3.4, -3.7],
-  [-5.2, 3.4, -2.25], [5.2, 3.4, -2.25],
+  [-5.84, -0.28, 4.08], [5.84, -0.28, 4.08],
+  [-5.84, -0.28, -4.24], [5.84, -0.28, -4.24],
+  [-5.8, 3.4, -4.2], [5.8, 3.4, -4.2],
+  [-5.8, 3.4, -2.75], [5.8, 3.4, -2.75],
 ] as const
 
 describe('room camera', () => {
   it('maps the floor plan into world units and back', () => {
-    expect(toWorld({ x: 0, y: 100 }, 1).toArray()).toEqual([-5, 1, 3.5])
+    expect(toWorld({ x: 0, y: 100 }, 1).toArray()).toEqual([-5.6, 1, 4])
     expect(toWorld({ x: 50, y: 50 }).toArray()).toEqual([0, 0, 0])
-    expect(toPlan(new Vector3(2.5, 9, -1.75))).toEqual({ x: 75, y: 25 })
+    expect(toPlan(new Vector3(2.8, 9, -2))).toEqual({ x: 75, y: 25 })
   })
 
   it.each([[1500, 700], [720, 720], [320, 760], [1600, 340]])(

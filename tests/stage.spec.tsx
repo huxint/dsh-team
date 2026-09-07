@@ -68,7 +68,7 @@ function stage(state: Partial<TeamPanelState> = {}, options: MountOptions = {}) 
   return mount({ leaderId: 'leader-1', currentId: 'leader-1', members: [alice, bob], ...state }, options)
 }
 
-/** Open one ledger from the dock on the right edge of the room. */
+/** Open one ledger from the room toolbar. */
 function openPanel(name: string): void {
   fireEvent.click(screen.getByRole('button', { name }))
 }
@@ -95,26 +95,6 @@ describe('presence', () => {
     expect(screen.getByText(en['stage.noTeam'])).toBeTruthy()
   })
 
-  it('counts the leader into the roster and reports an all-idle team', () => {
-    stage()
-    expect(screen.getByText('3 members')).toBeTruthy()
-    expect(screen.getByText(en['stage.idle'])).toBeTruthy()
-  })
-
-  it('reports the members that are mid-turn', () => {
-    stage({}, { running: ['child-1'] })
-    expect(screen.getByText('1 working')).toBeTruthy()
-  })
-
-  it('includes a working leader in the working-member count', () => {
-    stage({}, { running: ['leader-1', 'child-1'] })
-    expect(screen.getByText('2 working').textContent).toBe('2 working')
-  })
-
-  it('counts the open tasks against the whole list', () => {
-    stage({ tasks: [{ taskId: 't1', title: 'a', status: 'done' }, { taskId: 't2', title: 'b', status: 'active' }] })
-    expect(screen.getByText('1/2 tasks')).toBeTruthy()
-  })
 })
 
 describe('the composer seat', () => {
@@ -249,16 +229,6 @@ describe('the room', () => {
     expect(person(container, 'leader-1')?.getAttribute('data-relation')).toBe('lead')
     expect(person(container, 'child-1')?.getAttribute('data-relation')).toBe('peer')
     expect(person(container, 'child-2')?.getAttribute('data-relation')).toBe('managed')
-  })
-
-  it('names the peer channel only once two members can use it', () => {
-    stage()
-    expect(screen.getByText(en['stage.roomHint'])).toBeTruthy()
-    expect(screen.queryByText(en['stage.peerRing'])).toBeNull()
-
-    cleanup()
-    stage({ members: [alice, bob, carol] })
-    expect(screen.getByText(en['stage.peerRing'])).toBeTruthy()
   })
 
   it('shows the route a teammate was spawned with, and its role beside it', () => {

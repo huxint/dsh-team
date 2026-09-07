@@ -1,20 +1,20 @@
 import { MathUtils, PerspectiveCamera, Vector3 } from 'three'
 import type { Point } from './room.ts'
 
-export const ROOM = { width: 10, depth: 7, height: 3.35 } as const
+export const ROOM = { width: 11.2, depth: 8, height: 3.35 } as const
 
 export const FIGURE = 1.72
 
 // Angles are degrees; margins are fractions of the half viewport.
 export const CAMERA = {
   fov: 29,
-  pitch: 28,
+  pitch: 31,
   yaw: 7,
   lean: 2.2,
   tilt: 1.1,
-  marginX: 0.12,
-  marginTop: 0.15,
-  marginBottom: 0.13,
+  marginX: 0.08,
+  marginTop: 0.1,
+  marginBottom: 0.12,
 } as const
 
 /** Positions are percentages; unit is CSS pixels per world unit of height. */

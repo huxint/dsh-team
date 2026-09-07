@@ -1,9 +1,11 @@
-import { createElement } from 'react'
+import { createElement, useState, useSyncExternalStore } from 'react'
 import { createRoot } from 'react-dom/client'
 import { TeamStage } from '../../src/client/TeamStage.tsx'
 import { zh, en } from '../../src/client/locales.ts'
 import { crewState, sessionState } from './fixture'
 import { themeTokens, darkTokens } from './theme'
+import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import { ChatPreview } from './ChatPreview.tsx'
 
 const params = new URLSearchParams(location.search)
 const sheet = document.createElement('style')
@@ -22,14 +24,22 @@ const translate = (key: string, params?: Record<string, string | number>): strin
         line.replaceAll(`{${name}}`, String(value)), text)
 }
 
-const sessions = sessionState()
+const sessions = createSnapshotStore(sessionState())
+const team = createSnapshotStore(crewState)
+window.teamPreview = { team, sessions }
 
-createRoot(document.getElementById('stage')!).render(
-  createElement(TeamStage, {
-    useTeam: (select: (snap: typeof crewState) => unknown) => select(crewState),
-    useSessions: (select: (snap: ReturnType<typeof sessionState>) => unknown) => select(sessions),
-    openMember: () => {},
-    openLeader: () => {},
+function Preview() {
+  const [view, setView] = useState(params.get('view') ?? 'room')
+  const shared = {
+    useTeam: (select: (snap: typeof crewState) => unknown) => select(useSyncExternalStore(team.subscribe, team.getSnapshot)),
+    useSessions: (select: (snap: ReturnType<typeof sessionState>) => unknown) => select(useSyncExternalStore(sessions.subscribe, sessions.getSnapshot)),
+    openMember: (leaderId: string, memberId: string) => { document.body.dataset.openedMember = `${leaderId}/${memberId}` },
+    openLeader: (leaderId: string) => { document.body.dataset.openedMember = leaderId },
     t: translate,
-  }),
-)
+  }
+  return view === 'chat'
+    ? createElement(ChatPreview, { ...shared, english: params.get('locale') === 'en', onRoom: () => { setView('room') } })
+    : createElement(TeamStage, shared)
+}
+
+createRoot(document.getElementById('stage')!).render(createElement(Preview))

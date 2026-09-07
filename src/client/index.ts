@@ -1,12 +1,7 @@
 /**
- * Browser half of dsh-team: follow the current session's `team` projection and
- * contribute the team stage as one conversation view tab.
- *
- * There is no client-side fold. The host computes the team value once and the
- * framework pushes it here (history tail baseline + `session/projection`
- * frames), so this module only tracks WHICH session's value is on screen — and
- * whether that session has a team at all, because the tab exists exactly while
- * it does: an ordinary conversation never grows a view it cannot fill.
+ * The host's team projection drives the room, chat cards, and live roster.
+ * Following the leader while a teammate transcript is open keeps all three
+ * surfaces current without folding session events again in the browser.
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
@@ -20,6 +15,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { TeamView } from '../contract.ts'
 import { TeamStage, type TeamInjected, type TeamPanelState } from './TeamStage.tsx'
 import { ComposerAway } from './composer.tsx'
+import { TeamPresence } from './TeamPresence.tsx'
+import { TEAM_TOOLS, TeamToolCard } from './TeamToolCard.tsx'
 import { en, NS, zh, type TeamKey } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -228,6 +225,37 @@ export function apply(ctx: ClientContext): void {
     openMember,
     openLeader: (leaderId: string) => { sessions.open(leaderId as SessionId) },
     holdComposer,
+  })
+
+  ctx.slots.inject('tool.call.toolview', () => TEAM_TOOLS.map(tool => ctx.slots.register({
+    name: 'tool.call.toolview',
+    key: tool,
+    locale: NS,
+    inject: injectFace,
+  }, TeamToolCard)))
+
+  ctx.slots.inject('conversation.session.header.utilities', () => {
+    let disposePresence: (() => void) | null = null
+    const sync = (): void => {
+      const wanted = present(store.getSnapshot()) && rooms.getSnapshot() === 0
+      if (wanted === (disposePresence !== null)) return
+      disposePresence?.()
+      disposePresence = wanted ? ctx.slots.register({
+        name: 'conversation.session.header.utilities',
+        id: 'team-presence',
+        order: VIEW_ORDER,
+        locale: NS,
+        inject: injectFace,
+      }, TeamPresence) : null
+    }
+    sync()
+    const disposeTeam = store.subscribe(sync)
+    const disposeRooms = rooms.subscribe(sync)
+    return () => {
+      disposeTeam()
+      disposeRooms()
+      disposePresence?.()
+    }
   })
 
   /**

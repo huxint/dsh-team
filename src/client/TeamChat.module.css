@@ -1,0 +1,79 @@
+.presence { position: relative; display: flex; align-items: center; gap: 8px; }
+.avatarStack { display: flex; padding-left: 3px; }
+.stackMember { position: relative; width: 32px; height: 34px; margin-left: -3px; padding: 1px; border: 2px solid var(--team-page); border-radius: 50%; background: var(--team-surface-1); cursor: pointer; transition: transform 150ms; }
+.stackMember:hover { z-index: 1; transform: translateY(-2px); }
+.presenceDot { position: absolute; right: -1px; bottom: 1px; width: 7px; height: 7px; border: 1.5px solid var(--team-page); border-radius: 50%; background: var(--team-faint); }
+.stackMember[data-running='true'] .presenceDot { background: var(--team-hue); box-shadow: 0 0 0 2px color-mix(in srgb, var(--team-hue) 12%, transparent); }
+.presenceToggle { display: flex; align-items: center; gap: 5px; min-height: 32px; padding: 4px 6px; border: 0; border-radius: 7px; color: var(--team-muted); background: transparent; white-space: nowrap; cursor: pointer; font-variant-numeric: tabular-nums; }
+.presenceToggle:hover, .presenceToggle[aria-expanded='true'] { color: var(--team-hue); background: var(--team-surface-1); }
+.presencePanel { position: absolute; top: calc(100% + 12px); right: 0; z-index: 50; width: min(352px, calc(100vw - 32px)); max-height: calc(100dvh - 110px); overflow: auto; border: 1px solid var(--team-line); border-radius: 16px; background: var(--team-page); box-shadow: var(--dsw-shadow-lv3, 0 12px 32px var(--dsw-alias-bg-mask-2)); scrollbar-width: thin; }
+.presenceHead { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 18px 16px 12px 20px; }
+.presenceHead strong { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.presenceHead strong svg { color: var(--team-hue); }
+.presenceHead p { margin: 5px 0 0; color: var(--team-faint); font: var(--team-caption); }
+.iconButton { display: inline-grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--team-faint); cursor: pointer; }
+.iconButton:hover { color: var(--team-ink); background: var(--team-surface-2); }
+.memberList { margin: 0; padding: 0 8px 10px; list-style: none; }
+.memberRow { display: flex; align-items: center; width: 100%; gap: 10px; padding: 11px 10px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--team-ink); text-align: left; cursor: pointer; }
+.memberRow:hover { background: var(--team-surface-1); border-color: var(--team-line); }
+.memberPortrait { width: 38px; height: 40px; padding: 2px; flex: none; border: 1px solid var(--team-line); border-radius: 12px; background: var(--team-surface-1); }
+.memberCopy { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
+.memberHeading { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+.memberHeading strong { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memberHeading > span { color: var(--team-faint); font: var(--team-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memberWork { color: var(--team-muted); font: var(--team-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memberStatus { flex: none; display: flex; align-items: center; gap: 5px; font: var(--team-caption); color: var(--team-faint); white-space: nowrap; }
+.memberStatus::before { content: ''; width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+.memberStatus[data-running='true'] { color: var(--team-hue); }
+.presenceProgress { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 14px 20px 18px; border-top: 1px solid var(--team-line); font: var(--team-caption); color: var(--team-faint); }
+.presenceProgress strong { color: var(--team-muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+.presenceProgress progress { grid-column: 1 / -1; appearance: none; width: 100%; height: 4px; border: 0; border-radius: 4px; overflow: hidden; background: var(--team-surface-2); color: var(--team-hue); }
+.presenceProgress progress::-webkit-progress-bar { background: var(--team-surface-2); }
+.presenceProgress progress::-webkit-progress-value { background: var(--team-hue); border-radius: 4px; }
+.presenceProgress progress::-moz-progress-bar { background: var(--team-hue); border-radius: 4px; }
+
+.toolCard { container-type: inline-size; margin: 8px 0; border: 1px solid var(--team-line); border-radius: 12px; background: var(--team-page); overflow: hidden; font-size: var(--dsh-content-font-size-secondary, 13px); }
+.toolHeader { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 6px 10px 6px 14px; background: var(--team-surface-1); }
+.toolHeader > strong { font-weight: 550; font-size: inherit; }
+.toolIcon { display: grid; place-items: center; flex: none; color: var(--team-hue); }
+.toolState { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: var(--team-muted); font: var(--team-caption); white-space: nowrap; }
+.toolState::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--team-leaf); }
+.toolCard[data-state='running'] .toolState { color: var(--team-hue); }
+.toolCard[data-state='running'] .toolState::before { background: var(--team-hue); animation: team-working 1.8s ease-in-out infinite; }
+.toolCard[data-state='error'] .toolState, .toolCard[data-state='error'] .toolIcon { color: var(--dsw-alias-state-error-primary); }
+.toolCard[data-state='error'] .toolState::before { background: currentColor; }
+.toolCard[data-state='stopped'] .toolState::before { background: var(--team-faint); }
+.toolBody { display: flex; align-items: center; gap: 20px; padding: 14px 16px 16px; }
+.toolCopy { flex: 1; min-width: 0; }
+.toolSummary { margin: 0; color: var(--team-ink); line-height: 1.7; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.toolCaption { display: block; margin-top: 5px; font: var(--team-caption); color: var(--team-faint); overflow-wrap: anywhere; }
+.toolError { margin: 6px 0 0; color: var(--dsw-alias-state-error-primary); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.toolPeople { display: flex; align-items: center; flex: none; padding-left: 16px; border-left: 1px solid var(--team-line); }
+.toolParticipant { display: flex; align-items: center; gap: 6px; }
+.toolPerson { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 56px; padding: 2px 4px; border: 0; border-radius: 9px; background: transparent; color: var(--team-muted); }
+.toolPerson > :first-child { width: 36px; height: 38px; }
+button.toolPerson { cursor: pointer; }
+button.toolPerson:hover { color: var(--team-hue); background: var(--team-surface-1); }
+.toolPersonName { width: 100%; text-align: center; font: var(--team-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.personArrow { color: var(--team-faint); font-size: 12px; }
+.toolDetails { border-top: 1px solid var(--team-line); padding: 14px 16px; background: var(--team-surface-1); }
+.toolDetails > div + div { margin-top: 14px; }
+.toolDetails > div > span { color: var(--team-faint); font: var(--team-caption); }
+.toolDetails pre { margin: 5px 0 0; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: var(--team-small); color: var(--team-muted); scrollbar-width: thin; }
+.inspectButton { display: flex; align-items: center; gap: 6px; margin-top: 12px; padding: 4px 0; border: 0; background: transparent; color: var(--team-hue); cursor: pointer; }
+@container (max-width: 420px) {
+  .toolBody { gap: 12px; padding: 12px; }
+  .toolPeople { padding-left: 10px; }
+  .toolPerson { width: 42px; padding: 2px; }
+  .toolPerson > :first-child { width: 30px; height: 32px; }
+  .toolParticipant { gap: 2px; }
+}
+@media (max-width: 640px) {
+  .avatarStack .stackMember:nth-child(n + 3) { display: none; }
+  .presence { gap: 4px; }
+  .presenceToggle { font-size: 11px; }
+}
+@keyframes team-working { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) {
+  .presence *, .toolCard * { animation: none !important; transition: none !important; }
+}

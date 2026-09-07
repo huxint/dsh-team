@@ -31,7 +31,7 @@ export const LANES = { left: 3.5, right: 68.5 } as const
 const AISLE = 5.5
 
 // The scene and route planner share these dimensions in floor-plan units.
-export const WORKSTATION = { width: 15, depth: 10.3, offset: -7.15, chairWidth: 6.5, chairDepth: 9 } as const
+export const WORKSTATION = { width: 13.4, depth: 9, offset: -6.3, chairWidth: 5.8, chairDepth: 8 } as const
 
 const NEAR = 0.5
 

@@ -13,9 +13,10 @@ export function RoomScene(props: {
   readonly hint: string
   readonly fallbackLabel: string
   readonly stations: readonly StationSpec[]
+  readonly controls: ReactNode
   readonly children: ReactNode
 }) {
-  const { label, hint, fallbackLabel, stations, children } = props
+  const { label, hint, fallbackLabel, stations, controls, children } = props
   const [stage] = useState(() => new Stagecraft())
   const host = useRef<HTMLDivElement>(null)
   const office = useRef<Office>()
@@ -144,7 +145,10 @@ export function RoomScene(props: {
       >
         <StageContext.Provider value={stage}>{children}</StageContext.Provider>
       </div>
-      <div className={css.roomHint}>{status === 'fallback' ? `${fallbackLabel} · ${hint}` : hint}</div>
+      <footer className={css.roomFooter}>
+        <span className={css.roomHint}>{status === 'fallback' ? `${fallbackLabel} · ${hint}` : hint}</span>
+        {controls}
+      </footer>
     </section>
   )
 }

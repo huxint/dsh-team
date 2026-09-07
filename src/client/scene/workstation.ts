@@ -113,7 +113,7 @@ export class Station {
     group.add(green)
 
     batchMeshes(group)
-    this.chair = chair(shop)
+    this.chair = chair(shop, spec.seat)
     batchMeshes(this.chair)
     group.add(this.chair)
     this.setEmpty(spec.empty)
@@ -154,7 +154,7 @@ export class Station {
   }
 }
 
-function chair(shop: Shop): Group {
+function chair(shop: Shop, seat: number): Group {
   const p = shop.palette
   const group = named(new Group(), 'chair')
   const iron = shop.matte(p.metalDark, { roughness: 0.45, metalness: 0.5 })
@@ -168,11 +168,13 @@ function chair(shop: Shop): Group {
   }
   group.add(cylinder(0.026, 0.03, SEAT_HEIGHT - 0.1, iron, { y: (SEAT_HEIGHT - 0.1) / 2 + 0.04 }, 12))
   group.add(rounded(0.46, 0.08, 0.44, 0.03, shell, { y: SEAT_HEIGHT - 0.04 }))
+  group.add(rounded(0.4, 0.025, 0.38, 0.012, shop.matte(p.cushionCool, { roughness: 1 }), { y: SEAT_HEIGHT + 0.008, z: -0.012 }, { cast: false }))
   group.add(box(0.06, 0.16, 0.03, trim, { y: SEAT_HEIGHT + 0.06, z: 0.2 }))
   const back = rounded(0.44, 0.4, 0.06, 0.03, shell, { y: SEAT_HEIGHT + 0.24, z: 0.21 })
   back.name = 'chairBack'
   group.add(back)
   group.add(box(0.44, 0.07, 0.064, trim, { y: SEAT_HEIGHT + 0.16, z: 0.21 }, { cast: false }))
+  group.add(rounded(0.07, 0.1, 0.007, 0.003, shop.matte(p.accent(seat), { roughness: 0.9 }), { x: 0.14, y: SEAT_HEIGHT + 0.31, z: 0.244 }, { cast: false }))
   for (const side of [-1, 1]) {
     group.add(rounded(0.06, 0.03, 0.26, 0.012, trim, { x: side * 0.25, y: SEAT_HEIGHT + 0.2, z: 0.02 }))
     group.add(box(0.03, 0.18, 0.03, iron, { x: side * 0.25, y: SEAT_HEIGHT + 0.09, z: 0.08 }))

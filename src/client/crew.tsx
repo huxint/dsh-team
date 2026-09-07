@@ -23,7 +23,7 @@
  * still read in profile while the human face, which nobody needs while somebody
  * is typing, is simply not there to draw.
  */
-import { memo } from 'react'
+import { memo, useId } from 'react'
 import type { CSSProperties } from 'react'
 import css from './TeamStage.module.css'
 
@@ -269,7 +269,8 @@ const BELLY = 'M14 21.5 C20.5 24.5 28.5 23.5 35.5 19.5 C42.5 15.5 51.5 11 59.5 1
   + 'C51.5 15.5 43.5 19.5 35.5 23 C27.5 26.5 18 26.5 14 21.5 Z'
 
 /** The inner face opening of the plush hood, casting an ambient shadow over the face. */
-const HOOD_OPENING_RIM = 'M18 28.5 C18 19.5 23.5 13 32 13 C40.5 13 46 19.5 46 28.5 C46 36.5 40 43 32 43 C24 43 18 36.5 18 28.5 Z'
+const HOOD_OPENING_RIM = 'M17.5 26.5 C18 17.5 24 12 32 12 C40 12 46 18 46.5 26.5 '
+  + 'L43.5 27 C42.5 20 38 16.5 32 16.5 C26 16.5 21.5 20 20.5 27 Z'
 
 /** The shirt: refined shoulder curve, straight body, tailored hem over the hips. */
 const SHIRT = 'M32 46 C40.5 46 46 50.2 47 58.5 L48 76 C48 79 46.2 80.5 43 80.5 '
@@ -628,7 +629,7 @@ function head(kind: MaskKind, hair: HairKind, gear: GearKind, back: boolean) {
     <>
       {hairBehind(hair, back)}
       <ellipse className={css.crewEar} cx="17.2" cy="32" rx="3.4" ry="4" />
-      {back && <ellipse className={css.crewEar} cx="46.8" cy="32" rx="3.4" ry="4" />}
+      <ellipse className={css.crewEar} cx="46.8" cy="32" rx="3.4" ry="4" />
       <path
         className={css.crewFace}
         d="M32 11.5 C42 11.5 46.5 19.5 46.5 29 C46.5 39 40.5 44.5 32 44.5 C23.5 44.5 17.5 39 17.5 29 C17.5 19.5 22 11.5 32 11.5 Z"
@@ -636,20 +637,16 @@ function head(kind: MaskKind, hair: HairKind, gear: GearKind, back: boolean) {
       {back && <path className={css.crewHair} d={NAPE} />}
       {!back && (
         <g className={css.crewFacialGroup}>
-          {/* Eyebrows with soft curves */}
           <path className={css.crewBrow} d="M21.5 25 Q25.5 22.5 29.8 24.2" />
           <path className={css.crewBrow} d="M34.2 24.2 Q38.5 22.5 42.5 25" />
-          {/* Expressive eyes with dual sparkle catchlights */}
           <circle className={css.crewPupil} cx="26.8" cy="30" r="1.6" />
           <circle className={css.crewPupil} cx="37.2" cy="30" r="1.6" />
           <circle className={css.crewEyeGlint} cx="27.5" cy="29.2" r="0.65" />
           <circle className={css.crewEyeGlint} cx="37.9" cy="29.2" r="0.65" />
           <circle className={css.crewEyeGlintSub} cx="26.2" cy="30.8" r="0.35" />
           <circle className={css.crewEyeGlintSub} cx="36.6" cy="30.8" r="0.35" />
-          {/* Cute nose dot & smile */}
           <circle className={css.crewNose} cx="32" cy="32.8" r="0.5" />
           <path className={css.crewSmile} d="M28.2 35.8 Q32 39 35.8 35.8" />
-          {/* Delicate blush on cheeks */}
           <ellipse className={css.crewBlush} cx="21" cy="33.2" rx="2.4" ry="1.5" />
           <ellipse className={css.crewBlush} cx="43" cy="33.2" rx="2.4" ry="1.5" />
         </g>
@@ -659,8 +656,7 @@ function head(kind: MaskKind, hair: HairKind, gear: GearKind, back: boolean) {
       <path className={css.crewHairShine} d={HAIR_SHINE_SECONDARY} />
       {headGearUnder(gear)}
 
-      {/* The whale hood in profile, pulled down warmly over the head */}
-      <g transform={back ? 'translate(64 3) scale(-1 1)' : 'translate(0 3)'}>
+      <g transform={back ? 'translate(60.8 3) scale(-0.9 0.9)' : 'translate(3.2 3) scale(0.9)'}>
         {behind(kind)}
         <path className={css.crewHood} d={WHALE} />
         <path className={css.crewHood} d={FLUKES} />
@@ -670,7 +666,6 @@ function head(kind: MaskKind, hair: HairKind, gear: GearKind, back: boolean) {
         <path className={css.crewHoodSheen} d={HOOD_SHEEN} />
         <path className={css.crewHoodRidge} d={HOOD_RIDGE_HIGHLIGHT} />
         <path className={css.crewHoodShade} d={HOOD_SHADE} />
-        {/* Cute whale eye with glistening catchlight */}
         <circle className={css.crewEye} cx="53" cy="0" r="2.8" />
         <circle className={css.crewPupil} cx="53.8" cy="0.4" r="1.3" />
         <circle className={css.crewEyeGlint} cx="54.4" cy="-0.2" r="0.55" />
@@ -846,10 +841,12 @@ export const Crew = memo(function Crew(props: {
     kind, className, back = false, portrait = false, outfit = 'shirt', shoes = 'sneaker',
     hair = 'crop', gear = 'none', tone = 0, skin = 0,
   } = props
+  const hoodPaint = useId()
   return (
     <svg
       className={`${css.crew} ${className ?? ''}`}
-      viewBox={portrait ? '-1 -22 70 72' : '-6 -28 80 138'}
+      style={{ '--crew-hood-paint': `url(#${hoodPaint})` } as CSSProperties}
+      viewBox={portrait ? '-3 -22 70 72' : '-6 -28 80 138'}
       data-kind={kind}
       data-back={back ? 'true' : undefined}
       data-outfit={outfit}
@@ -861,6 +858,13 @@ export const Crew = memo(function Crew(props: {
       aria-hidden
       focusable="false"
     >
+      <defs>
+        <linearGradient id={hoodPaint} x1="0" y1="0" x2="0.72" y2="1">
+          <stop className={css.crewHoodLight} offset="0" />
+          <stop className={css.crewHoodMid} offset="0.48" />
+          <stop className={css.crewHoodDark} offset="1" />
+        </linearGradient>
+      </defs>
       {!portrait && (
         <>
           <g className={css.crewLimbBack}>
@@ -887,6 +891,7 @@ export const Crew = memo(function Crew(props: {
           </g>
           <rect className={css.crewNeck} x="28" y="40" width="8" height="11.5" rx="3.5" />
           <path className={css.crewShirt} d={SHIRT} />
+          <path className={css.crewShirtShade} d="M19 57.5 Q21 62 22 68 L23 80.5 H21 Q16 80.5 16 76 L17 58.5 Z M45 57.5 Q43 62 42 68 L41 80.5 H43 Q48 80.5 48 76 L47 58.5 Z" />
           <path className={css.crewSeam} d={SHOULDER_SEAM} />
           <path className={css.crewSeam} d={HEM_FOLD} />
           {outfit === 'hoodie' && <path className={css.crewHoodFabric} d={HOOD_FABRIC} />}
