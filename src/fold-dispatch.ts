@@ -4,16 +4,22 @@
  * model's only tool path is a run_code-style dispatcher) log nested calls as
  * dispatch records — name + arguments + rendered content — and the harness
  * projects `presentationMeta` only for top-level executions, so the meta
- * channel stays silent there while every fact still lands in the log. Both
- * the argument names and the rendered lines are this repo's own stable
- * vocabulary, so the fold reads them; an unfamiliar shape folds to nothing
- * rather than corrupting the view.
+ * channel stays silent there. Team tools carry the same structured fact in
+ * a separate text block on nested results. Historical logs have only prose;
+ * the fallback reads the fields those old renderers can establish, without
+ * treating a partial board read as a complete snapshot.
  *
  * @module dsh-team/fold-dispatch
  */
 
 import type { TeamBoardEntryView, TeamMemberView, TeamView } from './contract.ts'
-import type { TeamFact } from './fold.ts'
+
+/** A versioned envelope inside an ordinary, harness-readable text block. */
+export const DISPATCH_FACT_PREFIX = 'dsh-team/fact@1 '
+
+const FACT_TOOLS = new Set([
+  'team_spawn', 'team_relation', 'team_dismiss', 'team_task', 'team_send', 'team_note', 'team_board',
+])
 
 type JsonRecord = Record<string, unknown>
 
@@ -54,8 +60,9 @@ function textOf(content: unknown): string {
  */
 function resolveMember(view: TeamView, ref: string | undefined): TeamMemberView | undefined {
   if (ref === undefined) return undefined
-  return view.members.find(member => member.memberId === ref)
-    ?? view.members.find(member => member.name === ref)
+  const normalized = ref.trim()
+  return view.members.find(member => member.memberId === normalized)
+    ?? view.members.find(member => member.name.trim().toLowerCase() === normalized.toLowerCase())
 }
 
 /** The member id a settled spawn's render line ends with, or undefined. */
@@ -66,21 +73,10 @@ function spawnMemberId(text: string): string | undefined {
   return text.slice(at + marker.length, -2)
 }
 
-/** The task id a settled task render line opens with, or undefined. */
-function taskIdFromText(text: string): string | undefined {
-  if (!text.startsWith('task ')) return undefined
-  const rest = text.slice(5)
-  const space = rest.indexOf(' ')
-  const quoted = rest.indexOf(' "')
-  const end = quoted >= 0 && quoted < space ? quoted : space
-  if (end <= 0) return undefined
-  return rest.slice(0, end)
-}
-
 /** The member id a settled dismiss line names, or undefined. */
 function dismissedMemberId(text: string): string | undefined {
   const prefix = 'teammate '
-  const suffix = ' is dismissed.'
+  const suffix = text.endsWith('.') ? ' is dismissed.' : ' is dismissed'
   if (!text.startsWith(prefix) || !text.endsWith(suffix)) return undefined
   return text.slice(prefix.length, -suffix.length)
 }
@@ -91,56 +87,74 @@ function dismissedMemberId(text: string): string | undefined {
  * and its body is the bounded preview the projection schema expects — the
  * format is the fold's own contract with `team_board`'s render.
  * @param text - the rendered board text.
- * @param at - fallback stamp when a row's own stamp cannot parse.
  * @returns the entries, or undefined when the text is not a board render.
  */
-function boardEntriesFromText(text: string, at: number): TeamBoardEntryView[] | undefined {
+function boardEntriesFromText(text: string): TeamBoardEntryView[] | undefined {
   if (text === 'the shared workspace is empty') return []
   if (!text.startsWith('## ')) return undefined
   const entries: TeamBoardEntryView[] = []
-  for (const section of text.split(String.fromCharCode(10, 10))) {
-    const newline = section.indexOf(String.fromCharCode(10))
-    if (newline < 0) return undefined
+  for (const section of text.split('\n\n')) {
+    const newline = section.indexOf('\n')
+    if (!section.startsWith('## ') || newline < 0) return undefined
     const header = section.slice(3, newline)
     const nameAt = header.indexOf(' — ')
-    const idAt = header.indexOf(' <', nameAt)
-    const idEnd = header.indexOf('> · ', idAt)
-    if (nameAt < 0 || idAt < 0 || idEnd < 0) return undefined
+    const idAt = header.lastIndexOf(' <')
+    const idEnd = header.lastIndexOf('> · ')
+    if (nameAt < 0 || idAt <= nameAt || idEnd <= idAt) return undefined
     const stamp = Date.parse(header.slice(idEnd + 4))
+    if (!Number.isSafeInteger(stamp) || stamp < 0) return undefined
+    const preview = section.slice(newline + 1).split('\n').find(line => line.trim().length > 0)?.trim() ?? ''
     entries.push({
       key: header.slice(0, nameAt),
       authorName: header.slice(nameAt + 3, idAt),
       authorId: header.slice(idAt + 2, idEnd),
-      updatedAt: Number.isNaN(stamp) ? at : stamp,
-      preview: section.slice(newline + 1),
+      updatedAt: stamp,
+      // The historical workspace format bounded its first non-empty line.
+      preview: preview.length > 180 ? `${preview.slice(0, 180)}…` : preview,
     })
   }
   return entries
 }
 
 /**
- * Narrow one `tool/code-dispatch` record into a team fact. The dispatch
- * record carries the settled call's name, arguments, and rendered content;
- * facts that need the roster (name-to-id resolution) read it from the state.
+ * Read one `tool/code-dispatch` record's metadata. The caller validates the
+ * result with the same `readFact` boundary used for native tool results.
+ * Historical facts that need name resolution read the roster from the state.
  * @param view - the state holding the roster and task list.
  * @param data - the raw dispatch record data.
  * @param time - the event's stamp, used for snapshot facts.
  * @returns the fact, or undefined when the record is not a settled team call.
  */
-export function readDispatchFact(view: TeamView, data: unknown, time: number): TeamFact | undefined {
+export function readDispatchFact(view: TeamView, data: unknown, time: number): unknown {
   const record = asRecord(data)
-  if (record === undefined || record['isError'] === true) return undefined
-  const args = asRecord(record['arguments']) ?? {}
+  if (record === undefined || record['isError'] !== false) return undefined
+  const name = asText(record['name'])
+  if (name === undefined || !FACT_TOOLS.has(name)) return undefined
+  const args = asRecord(record['arguments'])
+  if (args === undefined) return undefined
+  const content = record['content']
+  const last = Array.isArray(content) ? asRecord(content.at(-1)) : undefined
+  const envelope = last?.['type'] === 'text' ? asText(last['text']) : undefined
+  if (envelope?.startsWith('dsh-team/fact@')) {
+    // A malformed or future envelope must not fall through to prose guesses.
+    if (!envelope.startsWith(DISPATCH_FACT_PREFIX)) return undefined
+    try {
+      return JSON.parse(envelope.slice(DISPATCH_FACT_PREFIX.length)) as unknown
+    } catch {
+      return undefined
+    }
+  }
   const text = textOf(record['content'])
-  switch (asText(record['name'])) {
+  switch (name) {
     case 'team_spawn': {
       const name = asText(args['name'])
       const relation = asRelation(args['relation'])
       const memberId = spawnMemberId(text)
       if (name === undefined || relation === undefined || memberId === undefined) return undefined
+      if (text !== `teammate ${name} joined as a ${relation} member and started on its task. Address it as "${name}" or "${memberId}".`) return undefined
       const role = asText(args['role'])
       const model = asText(args['model'])
-      const effort = asText(args['effort'])
+      const effort = asText(args['reasoning_effort'])
       return {
         team: 'member-added',
         member: {
@@ -157,32 +171,31 @@ export function readDispatchFact(view: TeamView, data: unknown, time: number): T
       const relation = asRelation(args['relation'])
       const member = resolveMember(view, asText(args['member']))
       if (relation === undefined || member === undefined) return undefined
+      if (text !== `${member.name} is now a ${relation} member`) return undefined
       const { joinedAt: _joinedAt, ...fact } = member
       return { team: 'member-updated', member: { ...fact, relation } }
     }
     case 'team_dismiss': {
       const ref = asText(args['member'])
-      if (ref === undefined) return { team: 'ended' }
-      const memberId = resolveMember(view, ref)?.memberId ?? dismissedMemberId(text)
+      if (args['member'] === undefined) return text === 'the team is disbanded' ? { team: 'ended' } : undefined
+      if (ref === undefined) return undefined
+      const memberId = dismissedMemberId(text)
       return memberId === undefined ? undefined : { team: 'member-removed', memberId }
     }
     case 'team_task': {
-      const taskId = asText(args['task_id']) ?? taskIdFromText(text)
-      if (taskId === undefined) return undefined
+      const rendered = /^task (\S+) "([\s\S]*)" is (pending|active|done)(?: for (\S+)| and unassigned)$/.exec(text)
+      if (rendered === null) return undefined
+      const taskId = rendered[1]!
+      if (args['task_id'] !== undefined && args['task_id'] !== taskId) return undefined
       const existing = view.tasks.find(candidate => candidate.taskId === taskId)
-      const title = asText(args['title']) ?? existing?.title
-      if (title === undefined) return undefined
-      const assignee = asText(args['assignee'])
-      const assigneeId = assignee === undefined
-        ? existing?.assigneeId
-        : resolveMember(view, assignee)?.memberId ?? assignee
-      const note = asText(args['note']) ?? existing?.note
+      const assigneeId = rendered[4]
+      const note = typeof args['note'] === 'string' ? args['note'] : existing?.note
       return {
         team: 'task',
         task: {
           taskId,
-          title,
-          status: asStatus(args['status']) ?? existing?.status ?? 'pending',
+          title: rendered[2]!,
+          status: asStatus(rendered[3])!,
           ...assigneeId !== undefined ? { assigneeId } : {},
           ...note !== undefined ? { note } : {},
         },
@@ -193,12 +206,16 @@ export function readDispatchFact(view: TeamView, data: unknown, time: number): T
       const message = asText(args['message'])
       const messageId = asText(record['subCallId'])
       if (to === undefined || message === undefined || messageId === undefined) return undefined
-      return { team: 'message', messageId, to: resolveMember(view, to)?.memberId ?? to, text: message }
+      const recipient = resolveMember(view, to)
+      const prefix = 'message queued as the next turn of '
+      if (!text.startsWith(prefix) || text.length === prefix.length) return undefined
+      if (recipient !== undefined && text !== prefix + recipient.name) return undefined
+      return { team: 'message', messageId, to: recipient?.memberId ?? to.trim(), text: message }
     }
     case 'team_board': {
-      // The projection's board is the shared area; a private-pad read is not it.
-      if (args['private'] === true) return undefined
-      const entries = boardEntriesFromText(text, time)
+      // Legacy renders of private or filtered reads are never whole snapshots.
+      if (args['private'] === true || args['key'] !== undefined) return undefined
+      const entries = boardEntriesFromText(text)
       return entries === undefined ? undefined : { team: 'board', entries, at: time }
     }
     default:

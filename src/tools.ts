@@ -5,8 +5,9 @@
  * teammate ever sees a tool it cannot use.
  *
  * Every mutating tool projects the WHOLE post-change entity through
- * `presentationMeta`. That projection is the team's durable record — see
- * ./fold.ts for why the plugin cannot append a session event of its own.
+ * `presentationMeta`, mirrored into finalized content for code-mode calls.
+ * That projection is the team's durable record — see ./fold.ts for why the
+ * plugin cannot append a session event of its own.
  *
  * @module dsh-team/tools
  */
@@ -16,6 +17,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolCallView, ToolDefinition, ToolResultView } from '@deepseek-ai/dsh-tools'
 import type { TeamMemberFact } from './fold.ts'
+import { DISPATCH_FACT_PREFIX } from './fold-dispatch.ts'
 import type { TeamSeat, TeamService } from './service.ts'
 import { SHARED_AREA, type TeamWorkspace } from './workspace.ts'
 
@@ -81,13 +83,39 @@ function memberValue(member: TeamMemberFact): {
 }
 
 /**
+ * Code-mode skips presentationMeta but durably logs finalized content. Carry
+ * the same fact there, after the readable result, using only the harness's
+ * existing text vocabulary. Native content and the code program's value keep
+ * their usual shapes. Finalization sees the accepted outcome, so failed or
+ * policy-blocked calls never publish a successful fact.
+ */
+function withDispatchFact(tool: ToolDefinition): ToolDefinition {
+  const project = tool.output.presentationMeta
+  if (project === undefined) return tool
+  return {
+    ...tool,
+    finalizeContent(exec, result) {
+      if (exec.parent === undefined || result.isError) return undefined
+      try {
+        const fact = project(exec.arguments, result.value)
+        return [...result.content, { type: 'text', text: DISPATCH_FACT_PREFIX + JSON.stringify(fact) }]
+      } catch {
+        // A projection error must not turn an accepted side effect into a
+        // retryable failure. Historical prose remains available to the fold.
+        return undefined
+      }
+    },
+  }
+}
+
+/**
  * `team_spawn` — start a teammate. Leader-only: a teammate that could spawn
  * would own a team its leader cannot see.
  * @param ctx - context carrying the team service.
  * @returns the tool definition.
  */
 export function spawnTool(ctx: Context): ToolDefinition {
-  return defineTool({
+  return withDispatchFact(defineTool({
     name: 'team_spawn',
     description:
       'Add a teammate to your agent team. A teammate is a long-lived agent with its own session, its own '
@@ -143,7 +171,7 @@ export function spawnTool(ctx: Context): ToolDefinition {
       }, exec.signal)
       return memberValue(member)
     },
-  })
+  }))
 }
 
 /**
@@ -167,7 +195,7 @@ export function sendTool(ctx: Context, audience: 'leader' | 'member'): ToolDefin
       + 'may only relay so far and you may not keep going back and forth with the same member about it, so '
       + 'ask for what you actually need in one message. Messaging the leader is never refused — when a peer '
       + 'exchange stops converging, that is the way out.'
-  return defineTool({
+  return withDispatchFact(defineTool({
     name: 'team_send',
     description,
     parameters: {
@@ -207,7 +235,7 @@ export function sendTool(ctx: Context, audience: 'leader' | 'member'): ToolDefin
         hop: sent.chain.hop,
       }
     },
-  })
+  }))
 }
 
 /**
@@ -217,7 +245,7 @@ export function sendTool(ctx: Context, audience: 'leader' | 'member'): ToolDefin
  * @returns the tool definition.
  */
 export function taskTool(ctx: Context): ToolDefinition {
-  return defineTool({
+  return withDispatchFact(defineTool({
     name: 'team_task',
     description:
       'Create or update one row of the shared team task list — the list every teammate can read, so it is '
@@ -266,7 +294,7 @@ export function taskTool(ctx: Context): ToolDefinition {
         ...task.note !== undefined ? { note: task.note } : {},
       })
     },
-  })
+  }))
 }
 
 /**
@@ -275,7 +303,7 @@ export function taskTool(ctx: Context): ToolDefinition {
  * @returns the tool definition.
  */
 export function relationTool(ctx: Context): ToolDefinition {
-  return defineTool({
+  return withDispatchFact(defineTool({
     name: 'team_relation',
     description:
       'Change how much one teammate may talk to the rest of the team; the teammate must already be on the '
@@ -299,7 +327,7 @@ export function relationTool(ctx: Context): ToolDefinition {
     execute(args, exec) {
       return Promise.resolve(memberValue(ctx.team.setRelation(actor(exec.agent), args.member, args.relation)))
     },
-  })
+  }))
 }
 
 /**
@@ -308,7 +336,7 @@ export function relationTool(ctx: Context): ToolDefinition {
  * @returns the tool definition.
  */
 export function dismissTool(ctx: Context): ToolDefinition {
-  return defineTool({
+  return withDispatchFact(defineTool({
     name: 'team_dismiss',
     description:
       'Dismiss one teammate, or the whole team when you name nobody — there is nothing to dismiss until you '
@@ -340,7 +368,7 @@ export function dismissTool(ctx: Context): ToolDefinition {
     execute(args, exec) {
       return Promise.resolve(ctx.team.dismiss(actor(exec.agent), args.member))
     },
-  })
+  }))
 }
 
 /**
@@ -490,7 +518,7 @@ export function noteTool(
       + 'to once you have teammates: before your first team_spawn nobody is there to read it.'
     : 'Every member reads and writes the shared board. Put a conclusion there instead of messaging it around: '
       + 'a note costs nobody a turn, and it is still there after you have finished and gone idle.'
-  return defineTool({
+  return withDispatchFact(defineTool({
     name: 'team_note',
     description:
       'Write one note into a team workspace. These workspaces are the team\'s own — they are NOT files and '
@@ -549,7 +577,7 @@ export function noteTool(
         at: now,
       }
     },
-  })
+  }))
 }
 
 /**
@@ -564,7 +592,7 @@ export function boardTool(
   audience: 'leader' | 'member',
   seatOf: SeatResolver,
 ): ToolDefinition {
-  return defineTool({
+  return withDispatchFact(defineTool({
     name: 'team_board',
     description:
       'Read a team workspace: the shared board every member writes to, or your own private pad. Without a key '
@@ -603,10 +631,7 @@ export function boardTool(
         text: value.entries.length === 0
           ? `the ${value.area} workspace is empty`
           : value.entries
-            // The header line doubles as the fold's durable row format (see
-            // fold-dispatch): code-mode logs carry this render, so author id
-            // and the update stamp ride it too.
-            .map(entry => `## ${entry.key} — ${entry.authorName} <${entry.authorId}> · ${new Date(entry.updatedAt).toISOString()}\n${entry.text ?? entry.preview}`)
+            .map(entry => `## ${entry.key} — ${entry.authorName}\n${entry.text ?? entry.preview}`)
             .join('\n\n'),
       }],
       presentationMeta: (_args, value) => ({ team: 'board', entries: value.board, at: value.at }),
@@ -637,5 +662,5 @@ export function boardTool(
         at: Date.now(),
       }
     },
-  })
+  }))
 }

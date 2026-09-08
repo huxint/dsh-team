@@ -295,11 +295,11 @@ export function userMessageEvent(source: MessageSource, text: string, time?: num
  * nested tool call (name + arguments + rendered content, no meta).
  * @param name - the dispatched tool's name.
  * @param args - the sibling-parsed arguments the record carried.
- * @param content - the rendered text the tool produced ('' for no content).
+ * @param content - the rendered text or content blocks the tool produced.
  * @param options - `isError` marks the call failed, `time` stamps the row.
  * @returns the committed event.
  */
-export function codeDispatchEvent(name: string, args: Record<string, unknown>, content: string, options: {
+export function codeDispatchEvent(name: string, args: Record<string, unknown>, content: string | readonly ContentBlock[], options: {
   readonly isError?: boolean
   readonly time?: number
 } = {}): SessionEvent {
@@ -315,7 +315,7 @@ export function codeDispatchEvent(name: string, args: Record<string, unknown>, c
       name,
       arguments: args,
       isError: options.isError === true,
-      content: content === '' ? [] : [{ type: 'text', text: content }],
+      content: typeof content === 'string' ? (content === '' ? [] : [{ type: 'text', text: content }]) : content,
     },
   } as unknown as SessionEvent
 }

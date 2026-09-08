@@ -83,6 +83,8 @@ export function teamProjection(maxRecentMessages: number): TeamProjectionUnit {
     // 5: the fold also consumes tool/code-dispatch records, so code-mode
     //    deployments (every tool call nested under one dispatcher) build the
     //    same view; the team_board render line carries author id and stamp.
-    stateVersion: 5,
+    // 6: nested results carry the same whole facts as native results, including
+    //    note writes and complete board snapshots; legacy references normalize.
+    stateVersion: 6,
   }
 }

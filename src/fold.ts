@@ -6,14 +6,16 @@
  * and a log written with this plugin would refuse to load once the plugin is
  * gone. Every durable fact therefore rides vocabulary the harness already
  * knows: the `meta` (presentationMeta) of this plugin's own `tool/result`
- * events, and the `user/message` deliveries whose source is `team-message`.
- * Both are plain JSON on a durable boundary, so this module validates them
- * instead of trusting them.
+ * events, the structured facts carried in nested `tool/code-dispatch` content,
+ * and the `user/message` deliveries whose source is `team-message`. All are
+ * plain JSON on a durable boundary, so this module validates them instead of
+ * trusting them.
  *
  * @module dsh-team/fold
  */
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-tools'
 import {
   EMPTY_TEAM_VIEW,
   type TeamBoardEntryView, type TeamMemberView, type TeamMessageView, type TeamRelation,
@@ -358,10 +360,8 @@ export function applyTeamEvent(view: TeamView, event: SessionEvent, bound: numbe
       : textOf(event.data.content)
     return applyIncoming(view, incoming, event.data.id, text, event.time, bound)
   }
-  // The tools package owns this event type, so the session union does not
-  // name it; the branch narrows structurally like every other boundary here.
-  if ((event as { readonly type: string }).type === 'tool/code-dispatch') {
-    const fact = readDispatchFact(view, (event as { readonly data?: unknown }).data, event.time)
+  if (event.type === 'tool/code-dispatch') {
+    const fact = readFact(readDispatchFact(view, event.data, event.time))
     return fact === undefined ? view : applyFact(view, fact, event.time, bound)
   }
   return view
