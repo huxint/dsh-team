@@ -5,7 +5,7 @@
  *
  * The browser half runs inside the shell's frozen module table: a `require()`
  * the table cannot answer throws at boot, so every `@deepseek-ai` import in
- * `src/client` must be a platform module, a shared store engine, or
+ * `src/client` must be a platform module, an inline-safe library, or
  * type-only. The purity plugin below fails the BUILD instead of the page.
  */
 import { readFile } from 'node:fs/promises'
@@ -15,18 +15,29 @@ import { transform } from 'lightningcss'
 
 const ID = 'dsh-team'
 
-/** Specifiers the web shell shares into the frozen module table. */
+/**
+ * Specifiers the web shell shares into the frozen module table. Mirrors the
+ * shell's own PLATFORM_MODULES (packages/client/web/src/platform.ts):
+ * react, react-dom, cordis, ui-slots, and ui-primitives ONLY. Notably the
+ * shell does NOT share @deepseek-ai/dsh-client-store — declaring it external
+ * here makes the bundle's require throw at boot ("missed the module table")
+ * and kills every UI surface of this plugin, so the store engine is inlined
+ * via INLINE_SAFE instead.
+ */
 const PLATFORM_MODULES = [
   'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis',
-  '@deepseek-ai/dsh-client-store',
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-client-ui-primitives',
 ] as const
 
 const CLIENT_EXTERNALS: readonly string[] = [...PLATFORM_MODULES]
 
-/** Wire/type layers with no cross-plugin runtime identity, safe to inline. */
-const INLINE_SAFE = /^@deepseek-ai\/dsh-(host-apiproxy|session|llm|tools|brand|session-projection)(\/|$)/
+/**
+ * Pure libraries with no cross-plugin runtime identity, safe to inline.
+ * dsh-client-store qualifies: its snapshot-store engine (zustand/vanilla +
+ * immer) keeps no global registry, so a per-plugin copy behaves identically.
+ */
+const INLINE_SAFE = /^@deepseek-ai\/dsh-(host-apiproxy|session|llm|tools|brand|session-projection|client-store)(\/|$)/
 
 const CSS_VIRTUAL_PREFIX = '\0dsh-css:'
 const CSS_VIRTUAL_SUFFIX = '.mjs'
