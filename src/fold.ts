@@ -19,6 +19,7 @@ import {
   type TeamBoardEntryView, type TeamMemberView, type TeamMessageView, type TeamRelation,
   type TeamTaskStatus, type TeamTaskView, type TeamView,
 } from './contract.ts'
+import { readDispatchFact } from './fold-dispatch.ts'
 
 /** Identity and relation facts one settled team tool publishes about a member. */
 export interface TeamMemberFact {
@@ -356,6 +357,12 @@ export function applyTeamEvent(view: TeamView, event: SessionEvent, bound: numbe
       ? noticeText(event.data.source) ?? textOf(event.data.content)
       : textOf(event.data.content)
     return applyIncoming(view, incoming, event.data.id, text, event.time, bound)
+  }
+  // The tools package owns this event type, so the session union does not
+  // name it; the branch narrows structurally like every other boundary here.
+  if ((event as { readonly type: string }).type === 'tool/code-dispatch') {
+    const fact = readDispatchFact(view, (event as { readonly data?: unknown }).data, event.time)
+    return fact === undefined ? view : applyFact(view, fact, event.time, bound)
   }
   return view
 }

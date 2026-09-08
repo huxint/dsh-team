@@ -94,6 +94,194 @@ const EMPTY_TEAM_VIEW = {
 /** The projection key this plugin owns. */
 const TEAM_PROJECTION_KEY = "team";
 //#endregion
+//#region src/fold-dispatch.ts
+function asRecord$1(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
+}
+function asText$1(value) {
+	return typeof value === "string" && value.length > 0 ? value : void 0;
+}
+function asRelation$1(value) {
+	return value === "managed" || value === "peer" ? value : void 0;
+}
+function asStatus$1(value) {
+	return value === "pending" || value === "active" || value === "done" ? value : void 0;
+}
+/** First readable text block of a dispatch record's rendered content. */
+function textOf$1(content) {
+	if (!Array.isArray(content)) return "";
+	for (const block of content) {
+		const record = asRecord$1(block);
+		if (record?.["type"] === "text") return asText$1(record["text"]) ?? "";
+	}
+	return "";
+}
+/**
+* Find one roster member by member id first, then by name. The id wins so a
+* teammate named after another member's id cannot hijack the reference.
+* @param view - the state holding the roster.
+* @param ref - the raw reference a tool argument carried.
+* @returns the matched member, or undefined.
+*/
+function resolveMember(view, ref) {
+	if (ref === void 0) return void 0;
+	return view.members.find((member) => member.memberId === ref) ?? view.members.find((member) => member.name === ref);
+}
+/** The member id a settled spawn's render line ends with, or undefined. */
+function spawnMemberId(text) {
+	const at = text.lastIndexOf(" or \"");
+	if (at < 0 || !text.endsWith("\".")) return void 0;
+	return text.slice(at + 5, -2);
+}
+/** The task id a settled task render line opens with, or undefined. */
+function taskIdFromText(text) {
+	if (!text.startsWith("task ")) return void 0;
+	const rest = text.slice(5);
+	const space = rest.indexOf(" ");
+	const quoted = rest.indexOf(" \"");
+	const end = quoted >= 0 && quoted < space ? quoted : space;
+	if (end <= 0) return void 0;
+	return rest.slice(0, end);
+}
+/** The member id a settled dismiss line names, or undefined. */
+function dismissedMemberId(text) {
+	if (!text.startsWith("teammate ") || !text.endsWith(" is dismissed.")) return void 0;
+	return text.slice(9, -14);
+}
+/**
+* Rebuild the shared-board snapshot a `team_board` dispatch rendered. The
+* header line of one row is `## key — authorName <authorId> · <ISO stamp>`
+* and its body is the bounded preview the projection schema expects — the
+* format is the fold's own contract with `team_board`'s render.
+* @param text - the rendered board text.
+* @param at - fallback stamp when a row's own stamp cannot parse.
+* @returns the entries, or undefined when the text is not a board render.
+*/
+function boardEntriesFromText(text, at) {
+	if (text === "the shared workspace is empty") return [];
+	if (!text.startsWith("## ")) return void 0;
+	const entries = [];
+	for (const section of text.split(String.fromCharCode(10, 10))) {
+		const newline = section.indexOf(String.fromCharCode(10));
+		if (newline < 0) return void 0;
+		const header = section.slice(3, newline);
+		const nameAt = header.indexOf(" — ");
+		const idAt = header.indexOf(" <", nameAt);
+		const idEnd = header.indexOf("> · ", idAt);
+		if (nameAt < 0 || idAt < 0 || idEnd < 0) return void 0;
+		const stamp = Date.parse(header.slice(idEnd + 4));
+		entries.push({
+			key: header.slice(0, nameAt),
+			authorName: header.slice(nameAt + 3, idAt),
+			authorId: header.slice(idAt + 2, idEnd),
+			updatedAt: Number.isNaN(stamp) ? at : stamp,
+			preview: section.slice(newline + 1)
+		});
+	}
+	return entries;
+}
+/**
+* Narrow one `tool/code-dispatch` record into a team fact. The dispatch
+* record carries the settled call's name, arguments, and rendered content;
+* facts that need the roster (name-to-id resolution) read it from the state.
+* @param view - the state holding the roster and task list.
+* @param data - the raw dispatch record data.
+* @param time - the event's stamp, used for snapshot facts.
+* @returns the fact, or undefined when the record is not a settled team call.
+*/
+function readDispatchFact(view, data, time) {
+	const record = asRecord$1(data);
+	if (record === void 0 || record["isError"] === true) return void 0;
+	const args = asRecord$1(record["arguments"]) ?? {};
+	const text = textOf$1(record["content"]);
+	switch (asText$1(record["name"])) {
+		case "team_spawn": {
+			const name = asText$1(args["name"]);
+			const relation = asRelation$1(args["relation"]);
+			const memberId = spawnMemberId(text);
+			if (name === void 0 || relation === void 0 || memberId === void 0) return void 0;
+			const role = asText$1(args["role"]);
+			const model = asText$1(args["model"]);
+			const effort = asText$1(args["effort"]);
+			return {
+				team: "member-added",
+				member: {
+					memberId,
+					name,
+					relation,
+					...role !== void 0 ? { role } : {},
+					...model !== void 0 ? { model } : {},
+					...effort !== void 0 ? { effort } : {}
+				}
+			};
+		}
+		case "team_relation": {
+			const relation = asRelation$1(args["relation"]);
+			const member = resolveMember(view, asText$1(args["member"]));
+			if (relation === void 0 || member === void 0) return void 0;
+			const { joinedAt: _joinedAt, ...fact } = member;
+			return {
+				team: "member-updated",
+				member: {
+					...fact,
+					relation
+				}
+			};
+		}
+		case "team_dismiss": {
+			const ref = asText$1(args["member"]);
+			if (ref === void 0) return { team: "ended" };
+			const memberId = resolveMember(view, ref)?.memberId ?? dismissedMemberId(text);
+			return memberId === void 0 ? void 0 : {
+				team: "member-removed",
+				memberId
+			};
+		}
+		case "team_task": {
+			const taskId = asText$1(args["task_id"]) ?? taskIdFromText(text);
+			if (taskId === void 0) return void 0;
+			const existing = view.tasks.find((candidate) => candidate.taskId === taskId);
+			const title = asText$1(args["title"]) ?? existing?.title;
+			if (title === void 0) return void 0;
+			const assignee = asText$1(args["assignee"]);
+			const assigneeId = assignee === void 0 ? existing?.assigneeId : resolveMember(view, assignee)?.memberId ?? assignee;
+			const note = asText$1(args["note"]) ?? existing?.note;
+			return {
+				team: "task",
+				task: {
+					taskId,
+					title,
+					status: asStatus$1(args["status"]) ?? existing?.status ?? "pending",
+					...assigneeId !== void 0 ? { assigneeId } : {},
+					...note !== void 0 ? { note } : {}
+				}
+			};
+		}
+		case "team_send": {
+			const to = asText$1(args["to"]);
+			const message = asText$1(args["message"]);
+			const messageId = asText$1(record["subCallId"]);
+			if (to === void 0 || message === void 0 || messageId === void 0) return void 0;
+			return {
+				team: "message",
+				messageId,
+				to: resolveMember(view, to)?.memberId ?? to,
+				text: message
+			};
+		}
+		case "team_board": {
+			if (args["private"] === true) return void 0;
+			const entries = boardEntriesFromText(text, time);
+			return entries === void 0 ? void 0 : {
+				team: "board",
+				entries,
+				at: time
+			};
+		}
+		default: return;
+	}
+}
+//#endregion
 //#region src/fold.ts
 function asRecord(value) {
 	return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
@@ -373,6 +561,10 @@ function applyTeamEvent(view, event, bound) {
 		const text = incoming.kind === "settled" ? noticeText(event.data.source) ?? textOf(event.data.content) : textOf(event.data.content);
 		return applyIncoming(view, incoming, event.data.id, text, event.time, bound);
 	}
+	if (event.type === "tool/code-dispatch") {
+		const fact = readDispatchFact(view, event.data, event.time);
+		return fact === void 0 ? view : applyFact(view, fact, event.time, bound);
+	}
 	return view;
 }
 /**
@@ -461,7 +653,7 @@ function teamProjection(maxRecentMessages) {
 			viewSchema: teamViewSchema,
 			view: (state) => state
 		},
-		stateVersion: 4
+		stateVersion: 5
 	};
 }
 //#endregion
@@ -1910,7 +2102,7 @@ function boardTool(workspace, audience, seatOf) {
 			},
 			render: (_args, value) => [{
 				type: "text",
-				text: value.entries.length === 0 ? `the ${value.area} workspace is empty` : value.entries.map((entry) => `## ${entry.key} — ${entry.authorName}\n${entry.text ?? entry.preview}`).join("\n\n")
+				text: value.entries.length === 0 ? `the ${value.area} workspace is empty` : value.entries.map((entry) => `## ${entry.key} — ${entry.authorName} <${entry.authorId}> · ${new Date(entry.updatedAt).toISOString()}\n${entry.text ?? entry.preview}`).join("\n\n")
 			}],
 			presentationMeta: (_args, value) => ({
 				team: "board",

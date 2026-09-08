@@ -290,6 +290,36 @@ export function userMessageEvent(source: MessageSource, text: string, time?: num
   } as unknown as SessionEvent
 }
 
+/**
+ * Build one `tool/code-dispatch` event — the code-mode log record of a
+ * nested tool call (name + arguments + rendered content, no meta).
+ * @param name - the dispatched tool's name.
+ * @param args - the sibling-parsed arguments the record carried.
+ * @param content - the rendered text the tool produced ('' for no content).
+ * @param options - `isError` marks the call failed, `time` stamps the row.
+ * @returns the committed event.
+ */
+export function codeDispatchEvent(name: string, args: Record<string, unknown>, content: string, options: {
+  readonly isError?: boolean
+  readonly time?: number
+} = {}): SessionEvent {
+  seq += 1
+  return {
+    type: 'tool/code-dispatch',
+    seq,
+    time: options.time ?? 1_700_000_000_000 + seq,
+    data: {
+      rootCallId: 'root-1',
+      parentCallId: 'root-1',
+      subCallId: 'root-1:code:' + String(seq),
+      name,
+      arguments: args,
+      isError: options.isError === true,
+      content: content === '' ? [] : [{ type: 'text', text: content }],
+    },
+  } as unknown as SessionEvent
+}
+
 /** The `ctx.commands` double: keeps every registered definition, exact disposers. */
 export class FakeCommands {
   readonly registered: CommandDefinition[] = []

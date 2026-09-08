@@ -603,7 +603,10 @@ export function boardTool(
         text: value.entries.length === 0
           ? `the ${value.area} workspace is empty`
           : value.entries
-            .map(entry => `## ${entry.key} — ${entry.authorName}\n${entry.text ?? entry.preview}`)
+            // The header line doubles as the fold's durable row format (see
+            // fold-dispatch): code-mode logs carry this render, so author id
+            // and the update stamp ride it too.
+            .map(entry => `## ${entry.key} — ${entry.authorName} <${entry.authorId}> · ${new Date(entry.updatedAt).toISOString()}\n${entry.text ?? entry.preview}`)
             .join('\n\n'),
       }],
       presentationMeta: (_args, value) => ({ team: 'board', entries: value.board, at: value.at }),

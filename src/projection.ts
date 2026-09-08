@@ -80,6 +80,9 @@ export function teamProjection(maxRecentMessages: number): TeamProjectionUnit {
     // 1: initial shape (members/tasks/messages folded from tool result meta).
     // 2: mailbox rows carry the conversation-chain depth they were delivered at.
     // 4: inbound agent messages use the current continuation source vocabulary.
-    stateVersion: 4,
+    // 5: the fold also consumes tool/code-dispatch records, so code-mode
+    //    deployments (every tool call nested under one dispatcher) build the
+    //    same view; the team_board render line carries author id and stamp.
+    stateVersion: 5,
   }
 }
