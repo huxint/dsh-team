@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest'
 import { EMPTY_TEAM_VIEW } from '../src/contract.ts'
 import { applyTeamEvent, foldTeam, readFact } from '../src/fold.ts'
-import { toolResultEvent, userMessageEvent } from './harness.ts'
+import { codeDispatchEvent, toolResultEvent, userMessageEvent } from './harness.ts'
 
 const BOUND = 50
 
@@ -174,5 +174,89 @@ describe('applyTeamEvent', () => {
       'hi',
     )
     expect(applyTeamEvent(view, stray, BOUND)).toBe(view)
+  })
+})
+
+
+describe('code-dispatch fold (code-mode deployments)', () => {
+  const NL = String.fromCharCode(10)
+  const spawnText = (name: string, id: string): string => 'teammate ' + name + ' joined as a managed member and started on its task. Address it as "' + name + '" or "' + id + '".'
+
+  it('builds the roster from a nested spawn, stamped with the event time', () => {
+    const view = foldTeam([
+      codeDispatchEvent('team_spawn', { name: 'Alice', role: 'reviewer', relation: 'managed', task: 'review it' }, spawnText('Alice', 'child-1'), { time: 4242 }),
+    ], BOUND)
+    expect(view.active).toBe(true)
+    expect(view.members).toEqual([{ memberId: 'child-1', name: 'Alice', role: 'reviewer', relation: 'managed', joinedAt: 4242 }])
+  })
+
+  it('lets roster-gated deliveries through once a dispatch spawn healed the roster', () => {
+    const view = foldTeam([
+      userMessageEvent({ kind: 'team-message', form: 'relay', senderSessionId: 'child-1', senderName: 'Alice', chainId: 'c1', hop: 0 }, 'early'),
+      codeDispatchEvent('team_spawn', { name: 'Alice', relation: 'managed', task: 'x' }, spawnText('Alice', 'child-1')),
+      userMessageEvent({ kind: 'team-message', form: 'relay', senderSessionId: 'child-1', senderName: 'Alice', chainId: 'c1', hop: 0 }, 'late'),
+    ], BOUND)
+    expect(view.messages.map(message => message.text)).toEqual(['late'])
+  })
+
+  it('folds task creates and updates with assignee name resolution', () => {
+    const view = foldTeam([
+      codeDispatchEvent('team_spawn', { name: 'Alice', relation: 'managed', task: 'x' }, spawnText('Alice', 'child-1')),
+      codeDispatchEvent('team_task', { title: 'ship it', assignee: 'Alice' }, 'task t1 "ship it" is pending for child-1'),
+      codeDispatchEvent('team_task', { task_id: 't1', status: 'done', note: 'shipped' }, 'task t1 "ship it" is done for child-1'),
+    ], BOUND)
+    expect(view.tasks).toEqual([{ taskId: 't1', title: 'ship it', status: 'done', assigneeId: 'child-1', note: 'shipped' }])
+  })
+
+  it('folds dismissals by name and whole-team disbands', () => {
+    const roster = [
+      codeDispatchEvent('team_spawn', { name: 'Alice', relation: 'managed', task: 'x' }, spawnText('Alice', 'child-1')),
+      codeDispatchEvent('team_spawn', { name: 'Bob', relation: 'peer', task: 'y' }, 'teammate Bob joined as a peer member and started on its task. Address it as "Bob" or "child-2".'),
+    ]
+    const dismissed = foldTeam([...roster, codeDispatchEvent('team_dismiss', { member: 'Bob' }, 'teammate child-2 is dismissed.')], BOUND)
+    expect(dismissed.members.map(member => member.name)).toEqual(['Alice'])
+    const disbanded = foldTeam([
+      codeDispatchEvent('team_spawn', { name: 'Alice', relation: 'managed', task: 'x' }, spawnText('Alice', 'child-1')),
+      codeDispatchEvent('team_dismiss', {}, 'the team is disbanded'),
+    ], BOUND)
+    expect(disbanded.active).toBe(false)
+    expect(disbanded.members).toEqual([])
+  })
+
+  it('records a leader message from a nested send, resolving the recipient name', () => {
+    const view = foldTeam([
+      codeDispatchEvent('team_spawn', { name: 'Alice', relation: 'managed', task: 'x' }, spawnText('Alice', 'child-1')),
+      codeDispatchEvent('team_send', { to: 'Alice', message: 'status?' }, 'message queued as the next turn of Alice'),
+    ], BOUND)
+    expect(view.messages).toHaveLength(1)
+    expect(view.messages[0].to).toBe('child-1')
+    expect(view.messages[0].text).toBe('status?')
+    expect(view.messages[0].messageId.startsWith('root-1:code:')).toBe(true)
+  })
+
+  it('folds a shared board read snapshot and ignores private-pad reads', () => {
+    const row = '## roadmap — Alice <child-1> · 2026-09-08T11:55:22.000Z' + NL + 'first line preview'
+    const view = foldTeam([
+      codeDispatchEvent('team_board', {}, row, { time: 7000 }),
+      codeDispatchEvent('team_board', { private: true }, '## secret — Alice <child-1> · 2026-09-08T12:00:00.000Z' + NL + 'hidden'),
+    ], BOUND)
+    expect(view.board).toEqual([{ key: 'roadmap', authorName: 'Alice', authorId: 'child-1', updatedAt: Date.parse('2026-09-08T11:55:22.000Z'), preview: 'first line preview' }])
+    expect(view.boardAt).toBe(7000)
+  })
+
+  it('composes with the meta channel without duplicating members', () => {
+    const view = foldTeam([
+      toolResultEvent({ team: 'member-added', member: alice }),
+      codeDispatchEvent('team_spawn', { name: 'Alice', role: 'reviewer', relation: 'peer', task: 'x' }, 'teammate Alice joined as a peer member and started on its task. Address it as "Alice" or "child-1".'),
+    ], BOUND)
+    expect(view.members).toHaveLength(1)
+  })
+
+  it('ignores failed dispatches and tools it does not own', () => {
+    const view = foldTeam([
+      codeDispatchEvent('team_spawn', { name: 'Alice', relation: 'managed', task: 'x' }, spawnText('Alice', 'child-1'), { isError: true }),
+      codeDispatchEvent('bash', { command: 'ls' }, 'ok'),
+    ], BOUND)
+    expect(view).toEqual(EMPTY_TEAM_VIEW)
   })
 })

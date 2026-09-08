@@ -94,6 +94,219 @@ const EMPTY_TEAM_VIEW = {
 /** The projection key this plugin owns. */
 const TEAM_PROJECTION_KEY = "team";
 //#endregion
+//#region src/fold-dispatch.ts
+/** A versioned envelope inside an ordinary, harness-readable text block. */
+const DISPATCH_FACT_PREFIX = "dsh-team/fact@1 ";
+const FACT_TOOLS = /* @__PURE__ */ new Set([
+	"team_spawn",
+	"team_relation",
+	"team_dismiss",
+	"team_task",
+	"team_send",
+	"team_note",
+	"team_board"
+]);
+function asRecord$1(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
+}
+function asText$1(value) {
+	return typeof value === "string" && value.length > 0 ? value : void 0;
+}
+function asRelation$1(value) {
+	return value === "managed" || value === "peer" ? value : void 0;
+}
+function asStatus$1(value) {
+	return value === "pending" || value === "active" || value === "done" ? value : void 0;
+}
+/** First readable text block of a dispatch record's rendered content. */
+function textOf$1(content) {
+	if (!Array.isArray(content)) return "";
+	for (const block of content) {
+		const record = asRecord$1(block);
+		if (record?.["type"] === "text") return asText$1(record["text"]) ?? "";
+	}
+	return "";
+}
+/**
+* Find one roster member by member id first, then by name. The id wins so a
+* teammate named after another member's id cannot hijack the reference.
+* @param view - the state holding the roster.
+* @param ref - the raw reference a tool argument carried.
+* @returns the matched member, or undefined.
+*/
+function resolveMember(view, ref) {
+	if (ref === void 0) return void 0;
+	const normalized = ref.trim();
+	return view.members.find((member) => member.memberId === normalized) ?? view.members.find((member) => member.name.trim().toLowerCase() === normalized.toLowerCase());
+}
+/** The member id a settled spawn's render line ends with, or undefined. */
+function spawnMemberId(text) {
+	const at = text.lastIndexOf(" or \"");
+	if (at < 0 || !text.endsWith("\".")) return void 0;
+	return text.slice(at + 5, -2);
+}
+/** The member id a settled dismiss line names, or undefined. */
+function dismissedMemberId(text) {
+	const prefix = "teammate ";
+	const suffix = text.endsWith(".") ? " is dismissed." : " is dismissed";
+	if (!text.startsWith(prefix) || !text.endsWith(suffix)) return void 0;
+	return text.slice(9, -suffix.length);
+}
+/**
+* Rebuild the shared-board snapshot a `team_board` dispatch rendered. The
+* header line of one row is `## key — authorName <authorId> · <ISO stamp>`
+* and its body is the bounded preview the projection schema expects — the
+* format is the fold's own contract with `team_board`'s render.
+* @param text - the rendered board text.
+* @returns the entries, or undefined when the text is not a board render.
+*/
+function boardEntriesFromText(text) {
+	if (text === "the shared workspace is empty") return [];
+	if (!text.startsWith("## ")) return void 0;
+	const entries = [];
+	for (const section of text.split("\n\n")) {
+		const newline = section.indexOf("\n");
+		if (!section.startsWith("## ") || newline < 0) return void 0;
+		const header = section.slice(3, newline);
+		const nameAt = header.indexOf(" — ");
+		const idAt = header.lastIndexOf(" <");
+		const idEnd = header.lastIndexOf("> · ");
+		if (nameAt < 0 || idAt <= nameAt || idEnd <= idAt) return void 0;
+		const stamp = Date.parse(header.slice(idEnd + 4));
+		if (!Number.isSafeInteger(stamp) || stamp < 0) return void 0;
+		const preview = section.slice(newline + 1).split("\n").find((line) => line.trim().length > 0)?.trim() ?? "";
+		entries.push({
+			key: header.slice(0, nameAt),
+			authorName: header.slice(nameAt + 3, idAt),
+			authorId: header.slice(idAt + 2, idEnd),
+			updatedAt: stamp,
+			preview: preview.length > 180 ? `${preview.slice(0, 180)}…` : preview
+		});
+	}
+	return entries;
+}
+/**
+* Read one `tool/code-dispatch` record's metadata. The caller validates the
+* result with the same `readFact` boundary used for native tool results.
+* Historical facts that need name resolution read the roster from the state.
+* @param view - the state holding the roster and task list.
+* @param data - the raw dispatch record data.
+* @param time - the event's stamp, used for snapshot facts.
+* @returns the fact, or undefined when the record is not a settled team call.
+*/
+function readDispatchFact(view, data, time) {
+	const record = asRecord$1(data);
+	if (record === void 0 || record["isError"] !== false) return void 0;
+	const name = asText$1(record["name"]);
+	if (name === void 0 || !FACT_TOOLS.has(name)) return void 0;
+	const args = asRecord$1(record["arguments"]);
+	if (args === void 0) return void 0;
+	const content = record["content"];
+	const last = Array.isArray(content) ? asRecord$1(content.at(-1)) : void 0;
+	const envelope = last?.["type"] === "text" ? asText$1(last["text"]) : void 0;
+	if (envelope?.startsWith("dsh-team/fact@")) {
+		if (!envelope.startsWith("dsh-team/fact@1 ")) return void 0;
+		try {
+			return JSON.parse(envelope.slice(16));
+		} catch {
+			return;
+		}
+	}
+	const text = textOf$1(record["content"]);
+	switch (name) {
+		case "team_spawn": {
+			const name = asText$1(args["name"]);
+			const relation = asRelation$1(args["relation"]);
+			const memberId = spawnMemberId(text);
+			if (name === void 0 || relation === void 0 || memberId === void 0) return void 0;
+			if (text !== `teammate ${name} joined as a ${relation} member and started on its task. Address it as "${name}" or "${memberId}".`) return void 0;
+			const role = asText$1(args["role"]);
+			const model = asText$1(args["model"]);
+			const effort = asText$1(args["reasoning_effort"]);
+			return {
+				team: "member-added",
+				member: {
+					memberId,
+					name,
+					relation,
+					...role !== void 0 ? { role } : {},
+					...model !== void 0 ? { model } : {},
+					...effort !== void 0 ? { effort } : {}
+				}
+			};
+		}
+		case "team_relation": {
+			const relation = asRelation$1(args["relation"]);
+			const member = resolveMember(view, asText$1(args["member"]));
+			if (relation === void 0 || member === void 0) return void 0;
+			if (text !== `${member.name} is now a ${relation} member`) return void 0;
+			const { joinedAt: _joinedAt, ...fact } = member;
+			return {
+				team: "member-updated",
+				member: {
+					...fact,
+					relation
+				}
+			};
+		}
+		case "team_dismiss": {
+			const ref = asText$1(args["member"]);
+			if (args["member"] === void 0) return text === "the team is disbanded" ? { team: "ended" } : void 0;
+			if (ref === void 0) return void 0;
+			const memberId = dismissedMemberId(text);
+			return memberId === void 0 ? void 0 : {
+				team: "member-removed",
+				memberId
+			};
+		}
+		case "team_task": {
+			const rendered = /^task (\S+) "([\s\S]*)" is (pending|active|done)(?: for (\S+)| and unassigned)$/.exec(text);
+			if (rendered === null) return void 0;
+			const taskId = rendered[1];
+			if (args["task_id"] !== void 0 && args["task_id"] !== taskId) return void 0;
+			const existing = view.tasks.find((candidate) => candidate.taskId === taskId);
+			const assigneeId = rendered[4];
+			const note = typeof args["note"] === "string" ? args["note"] : existing?.note;
+			return {
+				team: "task",
+				task: {
+					taskId,
+					title: rendered[2],
+					status: asStatus$1(rendered[3]),
+					...assigneeId !== void 0 ? { assigneeId } : {},
+					...note !== void 0 ? { note } : {}
+				}
+			};
+		}
+		case "team_send": {
+			const to = asText$1(args["to"]);
+			const message = asText$1(args["message"]);
+			const messageId = asText$1(record["subCallId"]);
+			if (to === void 0 || message === void 0 || messageId === void 0) return void 0;
+			const recipient = resolveMember(view, to);
+			const prefix = "message queued as the next turn of ";
+			if (!text.startsWith(prefix) || text.length === 35) return void 0;
+			if (recipient !== void 0 && text !== prefix + recipient.name) return void 0;
+			return {
+				team: "message",
+				messageId,
+				to: recipient?.memberId ?? to.trim(),
+				text: message
+			};
+		}
+		case "team_board": {
+			if (args["private"] === true || args["key"] !== void 0) return void 0;
+			const entries = boardEntriesFromText(text);
+			return entries === void 0 ? void 0 : {
+				team: "board",
+				entries,
+				at: time
+			};
+		}
+		default: return;
+	}
+}
+//#endregion
 //#region src/fold.ts
 function asRecord(value) {
 	return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
@@ -373,6 +586,10 @@ function applyTeamEvent(view, event, bound) {
 		const text = incoming.kind === "settled" ? noticeText(event.data.source) ?? textOf(event.data.content) : textOf(event.data.content);
 		return applyIncoming(view, incoming, event.data.id, text, event.time, bound);
 	}
+	if (event.type === "tool/code-dispatch") {
+		const fact = readFact(readDispatchFact(view, event.data, event.time));
+		return fact === void 0 ? view : applyFact(view, fact, event.time, bound);
+	}
 	return view;
 }
 /**
@@ -461,7 +678,7 @@ function teamProjection(maxRecentMessages) {
 			viewSchema: teamViewSchema,
 			view: (state) => state
 		},
-		stateVersion: 4
+		stateVersion: 6
 	};
 }
 //#endregion
@@ -1301,13 +1518,39 @@ function memberValue(member) {
 	};
 }
 /**
+* Code-mode skips presentationMeta but durably logs finalized content. Carry
+* the same fact there, after the readable result, using only the harness's
+* existing text vocabulary. Native content and the code program's value keep
+* their usual shapes. Finalization sees the accepted outcome, so failed or
+* policy-blocked calls never publish a successful fact.
+*/
+function withDispatchFact(tool) {
+	const project = tool.output.presentationMeta;
+	if (project === void 0) return tool;
+	return {
+		...tool,
+		finalizeContent(exec, result) {
+			if (exec.parent === void 0 || result.isError) return void 0;
+			try {
+				const fact = project(exec.arguments, result.value);
+				return [...result.content, {
+					type: "text",
+					text: DISPATCH_FACT_PREFIX + JSON.stringify(fact)
+				}];
+			} catch {
+				return;
+			}
+		}
+	};
+}
+/**
 * `team_spawn` — start a teammate. Leader-only: a teammate that could spawn
 * would own a team its leader cannot see.
 * @param ctx - context carrying the team service.
 * @returns the tool definition.
 */
 function spawnTool(ctx) {
-	return defineTool({
+	return withDispatchFact(defineTool({
 		name: "team_spawn",
 		description: "Add a teammate to your agent team. A teammate is a long-lived agent with its own session, its own memory and its own tools; it works in the background while you keep working, and it stays available until you dismiss it. Give it a name you will address it by and a first task. relation \"managed\" means it may only message you; \"peer\" means it may also message the other teammates directly and coordinate with them without going through you. Prefer a teammate over a one-shot subagent when the work needs several rounds, a durable owner, or someone the rest of the team can talk to. This is where a team begins: until one team_spawn has succeeded there is no team, no roster and no task list, and every other team_* tool has nothing to act on — call this one first.",
 		parameters: {
@@ -1378,7 +1621,7 @@ function spawnTool(ctx) {
 				...args.reasoning_effort !== void 0 ? { reasoningEffort: args.reasoning_effort } : {}
 			}, exec.signal));
 		}
-	});
+	}));
 }
 /**
 * `team_send` — the mailbox, shared by the leader and every teammate. The
@@ -1388,7 +1631,7 @@ function spawnTool(ctx) {
 * @returns the tool definition.
 */
 function sendTool(ctx, audience) {
-	return defineTool({
+	return withDispatchFact(defineTool({
 		name: "team_send",
 		description: audience === "leader" ? "Send a message to one teammate you have already spawned — with no team yet there is nobody to write to, so team_spawn comes first. It becomes that teammate's next turn: if it is busy, the message waits until the current turn ends, so it cannot redirect work already underway. Delivery is asynchronous — this returns once the message is accepted, never the teammate's answer; the reply arrives later as its own message to you." : "Send a message to another team member. Address the leader as \"leader\", or a teammate by its name. The message becomes the recipient's next turn; you get no answer back from this call. Use it to ask a peer for input, hand work over, or raise something with the leader mid-task. Finished work goes to the leader through team_send. A conversation between teammates carries a budget: it may only relay so far and you may not keep going back and forth with the same member about it, so ask for what you actually need in one message. Messaging the leader is never refused — when a peer exchange stops converging, that is the way out.",
 		parameters: {
@@ -1449,7 +1692,7 @@ function sendTool(ctx, audience) {
 				hop: sent.chain.hop
 			};
 		}
-	});
+	}));
 }
 /**
 * `team_task` — the shared task list. Writes are the leader's; teammates read
@@ -1458,7 +1701,7 @@ function sendTool(ctx, audience) {
 * @returns the tool definition.
 */
 function taskTool(ctx) {
-	return defineTool({
+	return withDispatchFact(defineTool({
 		name: "team_task",
 		description: "Create or update one row of the shared team task list — the list every teammate can read, so it is where multi-teammate work is coordinated without routing every detail through messages. The list belongs to a live team, so spawn the teammates first: a row nobody is on the roster to read changes nothing, and assigning one to a name that is not on the roster is refused. Omit task_id to create a row (title required); pass task_id to update one. Assign with a teammate name or member id. A teammate closes its own row by sending the outcome to the leader, so you rarely set status yourself.",
 		parameters: {
@@ -1525,7 +1768,7 @@ function taskTool(ctx) {
 				...task.note !== void 0 ? { note: task.note } : {}
 			});
 		}
-	});
+	}));
 }
 /**
 * `team_relation` — widen or tighten one teammate's autonomy.
@@ -1533,7 +1776,7 @@ function taskTool(ctx) {
 * @returns the tool definition.
 */
 function relationTool(ctx) {
-	return defineTool({
+	return withDispatchFact(defineTool({
 		name: "team_relation",
 		description: "Change how much one teammate may talk to the rest of the team; the teammate must already be on the roster, so this never applies before you have spawned one. \"peer\" lets it message other teammates directly and self-coordinate; \"managed\" routes all of its traffic back through you. Widen when a teammate needs to work with another one; tighten when you want every hand-off to pass your desk.",
 		parameters: {
@@ -1570,7 +1813,7 @@ function relationTool(ctx) {
 		execute(args, exec) {
 			return Promise.resolve(memberValue(ctx.team.setRelation(actor(exec.agent), args.member, args.relation)));
 		}
-	});
+	}));
 }
 /**
 * `team_dismiss` — release one teammate, or the whole team.
@@ -1578,7 +1821,7 @@ function relationTool(ctx) {
 * @returns the tool definition.
 */
 function dismissTool(ctx) {
-	return defineTool({
+	return withDispatchFact(defineTool({
 		name: "team_dismiss",
 		description: "Dismiss one teammate, or the whole team when you name nobody — there is nothing to dismiss until you have spawned someone. A dismissed teammate stops what it is doing and receives no further messages; its transcript stays readable. Dismiss teammates whose work is finished — an idle teammate costs nothing to keep, but a stale one invites you to message it again.",
 		parameters: { member: {
@@ -1612,7 +1855,7 @@ function dismissTool(ctx) {
 		execute(args, exec) {
 			return Promise.resolve(ctx.team.dismiss(actor(exec.agent), args.member));
 		}
-	});
+	}));
 }
 /**
 * `team_list` — the shared read every member uses to decide who to talk to.
@@ -1771,7 +2014,7 @@ function place(seat, priv) {
 * @returns the tool definition.
 */
 function noteTool(workspace, audience, seatOf) {
-	return defineTool({
+	return withDispatchFact(defineTool({
 		name: "team_note",
 		description: "Write one note into a team workspace. These workspaces are the team's own — they are NOT files and they are not in the user's working tree. " + (audience === "leader" ? "Every teammate reads and writes the shared board, so it is where a decision belongs once you have made it — leaving a note costs no turn, while messaging someone costs one of theirs. It is worth writing to once you have teammates: before your first team_spawn nobody is there to read it." : "Every member reads and writes the shared board. Put a conclusion there instead of messaging it around: a note costs nobody a turn, and it is still there after you have finished and gone idle.") + " With private=true the note goes to your own pad instead, which nobody else can read: use it to keep your own state across turns. Writing a key that already exists replaces it whole; omit text to drop the note.",
 		parameters: {
@@ -1848,7 +2091,7 @@ function noteTool(workspace, audience, seatOf) {
 				at: now
 			};
 		}
-	});
+	}));
 }
 /**
 * `team_board` — read a virtual workspace.
@@ -1858,7 +2101,7 @@ function noteTool(workspace, audience, seatOf) {
 * @returns the tool definition.
 */
 function boardTool(workspace, audience, seatOf) {
-	return defineTool({
+	return withDispatchFact(defineTool({
 		name: "team_board",
 		description: "Read a team workspace: the shared board every member writes to, or your own private pad. Without a key you get the index — every note with who wrote it and when — and with a key you get that note in full. " + (audience === "leader" ? "Read the board before assigning work: a teammate that has already recorded its conclusion there does not need to be asked for it again. The board belongs to the team, so before your first team_spawn it is empty and reading it tells you nothing." : "Read the board before messaging anyone: what you were about to ask for may already be written down, and a note costs nobody a turn."),
 		parameters: {
@@ -1942,7 +2185,7 @@ function boardTool(workspace, audience, seatOf) {
 				at: Date.now()
 			};
 		}
-	});
+	}));
 }
 //#endregion
 //#region src/teammate.ts

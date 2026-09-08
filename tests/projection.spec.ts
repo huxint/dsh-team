@@ -16,7 +16,7 @@ const unit = teamProjection(3)
 describe('teamProjection', () => {
   it('is registered under the key the client reads, with a stated state version', () => {
     expect(unit.key).toBe('team')
-    expect(unit.stateVersion).toBe(4)
+    expect(unit.stateVersion).toBe(6)
     expect(unit.init(testHeader(), SessionLogOffset(0))).toEqual(EMPTY_TEAM_VIEW)
   })
 
