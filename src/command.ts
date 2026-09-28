@@ -33,7 +33,7 @@ const BRIEF =
 const ACK = 'The leader takes it from here: it will assemble and drive the team for this.'
 
 /**
- * The `/agent-teams` definition: one command, whole-goal input, image-capable.
+ * The `/agent-teams` definition: one command, whole-goal input, attachment-capable.
  * @returns the command definition for the registry.
  */
 export function teamCommand(): CommandDefinition {
@@ -42,7 +42,7 @@ export function teamCommand(): CommandDefinition {
     description:
       'Hand a goal to an agent team: the main session spawns named teammates and coordinates them. '
       + 'Everything after the command becomes the team\'s brief.',
-    input: { hint: '<what the team should do>', images: true },
+    input: { hint: '<what the team should do>', attachments: true },
     handler({ agent, rawInput, attachments }) {
       // A teammate transcript has no team to hand off to — spawning from a
       // member is refused by the service (`NESTED_TEAM`) before it starts.

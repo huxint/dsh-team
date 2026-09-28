@@ -48,14 +48,14 @@ function release(disposers: readonly (() => void)[]): void {
   if (failures.length > 1) throw new AggregateError(failures, 'dsh-team: teammate teardown failed')
 }
 
-type ChildSetup = (childCtx: Context) => () => void
+type ChildSetup = (child: Agent) => () => void
 
 /** Observe the live agent registry so cold resumes and fresh children share one setup path. */
 function registerChildSetup(ctx: Context, setup: ChildSetup): () => void {
   const installed = new Map<SessionId, () => void>()
   const install = (agent: Agent): void => {
     if (agent.session.header.origin !== 'subagent' || installed.has(agent.id)) return
-    const dispose = setup(agent.ctx)
+    const dispose = setup(agent)
     installed.set(agent.id, dispose)
   }
   const disposeCreated = ctx.on('agent/created', (payload: { agent: Agent }) => { install(payload.agent) })
@@ -141,9 +141,8 @@ function briefing(ctx: Context, team: TeamService, child: Agent): string {
  * @returns the exact effect disposer removing the contribution.
  */
 export function installTeammateWorld(ctx: Context): () => void {
-  return registerChildSetup(ctx, (childCtx) => {
-    const child = childCtx.agent
-    if (child === undefined) return () => {}
+  return registerChildSetup(ctx, (child) => {
+    const childCtx = child.ctx
     const member = ctx.team.adopt(child)
     if (member === undefined) return () => {}
     const disposers: Array<() => void> = []
@@ -174,11 +173,11 @@ export function installTeammateWorld(ctx: Context): () => void {
  * @returns the exact effect disposer removing the contribution.
  */
 export function installTeammateWorkspace(ctx: Context, workspace: TeamWorkspace): () => void {
-  return registerChildSetup(ctx, (childCtx) => {
-    const child = childCtx.agent
-    const leaderId = child?.session.header.parentSession
-    const roster = child === undefined ? undefined : ctx.team.rosterFor(child)
-    if (child === undefined || leaderId === undefined || roster === undefined) return () => {}
+  return registerChildSetup(ctx, (child) => {
+    const childCtx = child.ctx
+    const leaderId = child.session.header.parentSession
+    const roster = ctx.team.rosterFor(child)
+    if (leaderId === undefined || roster === undefined) return () => {}
     // The seat is captured here, not resolved per call: the workspace is the
     // one surface a teammate must keep while its leader session is unloaded.
     const seat = { leaderId, memberId: child.id, name: roster.self.name }

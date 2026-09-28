@@ -6,7 +6,7 @@
  * and a log written with this plugin would refuse to load once the plugin is
  * gone. Every durable fact therefore rides vocabulary the harness already
  * knows: the `meta` (presentationMeta) of this plugin's own `tool/result`
- * events, the structured facts carried in nested `tool/code-dispatch` content,
+ * events, the structured facts carried in nested `tool/ptc-dispatch` content,
  * and the `user/message` deliveries whose source is `team-message`. All are
  * plain JSON on a durable boundary, so this module validates them instead of
  * trusting them.
@@ -360,7 +360,7 @@ export function applyTeamEvent(view: TeamView, event: SessionEvent, bound: numbe
       : textOf(event.data.content)
     return applyIncoming(view, incoming, event.data.id, text, event.time, bound)
   }
-  if (event.type === 'tool/code-dispatch') {
+  if (event.type === 'tool/ptc-dispatch') {
     const fact = readFact(readDispatchFact(view, event.data, event.time))
     return fact === undefined ? view : applyFact(view, fact, event.time, bound)
   }

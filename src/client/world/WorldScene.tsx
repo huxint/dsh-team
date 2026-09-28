@@ -133,10 +133,10 @@ export function WorldScene(props: {
       refresh()
     }
     const motion = window.matchMedia('(prefers-reduced-motion: reduce)')
-    let seen = true
+    let seen = false
     const activity = (): void => {
       setReduced(motion.matches)
-      world.setActivity(seen && document.visibilityState !== 'hidden', motion.matches, playingRef.current)
+      world.setActivity(seen && document.visibilityState !== 'hidden', motion.matches, playingRef.current, document.hasFocus())
     }
     const sizes = new ResizeObserver(() => { world.resize(element.clientWidth, element.clientHeight) })
     sizes.observe(element)
@@ -157,6 +157,8 @@ export function WorldScene(props: {
     surface.addEventListener('webglcontextrestored', restored)
     motion.addEventListener('change', activity)
     document.addEventListener('visibilitychange', activity)
+    window.addEventListener('focus', activity)
+    window.addEventListener('blur', activity)
     world.resize(element.clientWidth, element.clientHeight)
     activity()
     return () => {
@@ -164,6 +166,8 @@ export function WorldScene(props: {
       sight.disconnect()
       motion.removeEventListener('change', activity)
       document.removeEventListener('visibilitychange', activity)
+      window.removeEventListener('focus', activity)
+      window.removeEventListener('blur', activity)
       surface.removeEventListener('webglcontextlost', lost)
       surface.removeEventListener('webglcontextrestored', restored)
       world.dispose()
@@ -259,7 +263,7 @@ export function WorldScene(props: {
           const world = runtime.current
           if (!world) return
           if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); world.rotate(event.key === 'ArrowLeft' ? 1 : -1) }
-          if (event.key === '+' || event.key === '=' || event.key === '-') { event.preventDefault(); world.view.zoom(event.key === '-' ? 1 / 1.2 : 1.2); world.invalidate() }
+          if (event.key === '+' || event.key === '=' || event.key === '-') { event.preventDefault(); world.view.zoom(event.key === '-' ? 1 / 1.2 : 1.2); world.redraw() }
           if (event.key === 'Home') { event.preventDefault(); world.resetCamera() }
         }} />
         <button className={css.worldMark} type="button" aria-label={t('world.title')} onClick={() => { runtime.current?.resetCamera() }}><WorldIcon name="island" size={26} /><span className={css.tip}>{t('world.title')}</span></button>
@@ -335,7 +339,7 @@ export function WorldScene(props: {
         <div className={css.viewControls}>
           <div className={css.floorSwitch} aria-label={t('world.floors')}>{(['all', 'ground', 'terrace'] as const).map(value => <button type="button" key={value} data-floor-view={value} disabled={disabled} aria-label={t(`world.floor.${value}`)} aria-pressed={floor === value} onClick={() => { chooseFloor(value) }}><WorldIcon name={value === 'all' ? 'layers' : value} size={17} /><span className={css.tip}>{t(`world.floor.${value}`)}</span></button>)}</div>
           <div className={css.cameraControls}>
-            {([['left', 'rotateLeft', () => runtime.current?.rotate(1)], ['right', 'rotateRight', () => runtime.current?.rotate(-1)], ['minus', 'zoomOut', () => { runtime.current?.view.zoom(1 / 1.2); runtime.current?.invalidate() }], ['plus', 'zoomIn', () => { runtime.current?.view.zoom(1.2); runtime.current?.invalidate() }], ['reset', 'reset', () => runtime.current?.resetCamera()]] as const).map(([icon, title, action]) => <button type="button" key={title} disabled={disabled} aria-label={t(`world.${title}`)} onClick={action}><WorldIcon name={icon} size={16} /><span className={css.tip}>{t(`world.${title}`)}</span></button>)}
+            {([['left', 'rotateLeft', () => runtime.current?.rotate(1)], ['right', 'rotateRight', () => runtime.current?.rotate(-1)], ['minus', 'zoomOut', () => { runtime.current?.view.zoom(1 / 1.2); runtime.current?.redraw() }], ['plus', 'zoomIn', () => { runtime.current?.view.zoom(1.2); runtime.current?.redraw() }], ['reset', 'reset', () => runtime.current?.resetCamera()]] as const).map(([icon, title, action]) => <button type="button" key={title} disabled={disabled} aria-label={t(`world.${title}`)} onClick={action}><WorldIcon name={icon} size={16} /><span className={css.tip}>{t(`world.${title}`)}</span></button>)}
           </div>
         </div>
 

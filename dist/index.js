@@ -38,7 +38,7 @@ const BRIEF = "Pursue this request through your agent team rather than alone: de
 /** What the composer shows when the steering was accepted. */
 const ACK = "The leader takes it from here: it will assemble and drive the team for this.";
 /**
-* The `/agent-teams` definition: one command, whole-goal input, image-capable.
+* The `/agent-teams` definition: one command, whole-goal input, attachment-capable.
 * @returns the command definition for the registry.
 */
 function teamCommand() {
@@ -47,7 +47,7 @@ function teamCommand() {
 		description: "Hand a goal to an agent team: the main session spawns named teammates and coordinates them. Everything after the command becomes the team's brief.",
 		input: {
 			hint: "<what the team should do>",
-			images: true
+			attachments: true
 		},
 		handler({ agent, rawInput, attachments }) {
 			if (agent.session.header.origin === "subagent") return {
@@ -186,7 +186,7 @@ function boardEntriesFromText(text) {
 	return entries;
 }
 /**
-* Read one `tool/code-dispatch` record's metadata. The caller validates the
+* Read one `tool/ptc-dispatch` record's metadata. The caller validates the
 * result with the same `readFact` boundary used for native tool results.
 * Historical facts that need name resolution read the roster from the state.
 * @param view - the state holding the roster and task list.
@@ -586,7 +586,7 @@ function applyTeamEvent(view, event, bound) {
 		const text = incoming.kind === "settled" ? noticeText(event.data.source) ?? textOf(event.data.content) : textOf(event.data.content);
 		return applyIncoming(view, incoming, event.data.id, text, event.time, bound);
 	}
-	if (event.type === "tool/code-dispatch") {
+	if (event.type === "tool/ptc-dispatch") {
 		const fact = readFact(readDispatchFact(view, event.data, event.time));
 		return fact === void 0 ? view : applyFact(view, fact, event.time, bound);
 	}
@@ -678,7 +678,7 @@ function teamProjection(maxRecentMessages) {
 			viewSchema: teamViewSchema,
 			view: (state) => state
 		},
-		stateVersion: 6
+		stateVersion: 7
 	};
 }
 //#endregion
@@ -1518,7 +1518,7 @@ function memberValue(member) {
 	};
 }
 /**
-* Code-mode skips presentationMeta but durably logs finalized content. Carry
+* PTC mode skips presentationMeta but durably logs finalized content. Carry
 * the same fact there, after the readable result, using only the harness's
 * existing text vocabulary. Native content and the code program's value keep
 * their usual shapes. Finalization sees the accepted outcome, so failed or
@@ -2215,7 +2215,7 @@ function registerChildSetup(ctx, setup) {
 	const installed = /* @__PURE__ */ new Map();
 	const install = (agent) => {
 		if (agent.session.header.origin !== "subagent" || installed.has(agent.id)) return;
-		const dispose = setup(agent.ctx);
+		const dispose = setup(agent);
 		installed.set(agent.id, dispose);
 	};
 	const disposeCreated = ctx.on("agent/created", (payload) => {
@@ -2278,9 +2278,8 @@ function briefing(ctx, team, child) {
 * @returns the exact effect disposer removing the contribution.
 */
 function installTeammateWorld(ctx) {
-	return registerChildSetup(ctx, (childCtx) => {
-		const child = childCtx.agent;
-		if (child === void 0) return () => {};
+	return registerChildSetup(ctx, (child) => {
+		const childCtx = child.ctx;
 		if (ctx.team.adopt(child) === void 0) return () => {};
 		const disposers = [];
 		try {
@@ -2311,11 +2310,11 @@ function installTeammateWorld(ctx) {
 * @returns the exact effect disposer removing the contribution.
 */
 function installTeammateWorkspace(ctx, workspace) {
-	return registerChildSetup(ctx, (childCtx) => {
-		const child = childCtx.agent;
-		const leaderId = child?.session.header.parentSession;
-		const roster = child === void 0 ? void 0 : ctx.team.rosterFor(child);
-		if (child === void 0 || leaderId === void 0 || roster === void 0) return () => {};
+	return registerChildSetup(ctx, (child) => {
+		const childCtx = child.ctx;
+		const leaderId = child.session.header.parentSession;
+		const roster = ctx.team.rosterFor(child);
+		if (leaderId === void 0 || roster === void 0) return () => {};
 		const seat = {
 			leaderId,
 			memberId: child.id,

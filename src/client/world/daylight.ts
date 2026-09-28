@@ -1,6 +1,8 @@
 import { Color, MathUtils, Vector3 } from 'three'
 
-export function daylight(hour: number): { sun: Vector3; moon: Vector3; light: number; dusk: number; night: boolean } {
+export interface Daylight { sun: Vector3; moon: Vector3; light: number; dusk: number; night: boolean }
+
+export function daylight(hour: number): Daylight {
   const angle = (hour - 6) / 24 * Math.PI * 2
   const altitude = Math.sin(angle)
   const sun = new Vector3(-Math.cos(angle) * 18, altitude * 19, -10)

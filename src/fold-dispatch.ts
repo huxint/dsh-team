@@ -1,7 +1,7 @@
 /**
- * The `tool/code-dispatch` fold channel — the code-mode mirror of the
- * `tool/result` meta channel in `./fold.ts`. Code-mode deployments (the
- * model's only tool path is a run_code-style dispatcher) log nested calls as
+ * The `tool/ptc-dispatch` fold channel — the PTC-mode mirror of the
+ * `tool/result` meta channel in `./fold.ts`. PTC-mode deployments (the
+ * model's only tool path is the run_code dispatcher) log nested calls as
  * dispatch records — name + arguments + rendered content — and the harness
  * projects `presentationMeta` only for top-level executions, so the meta
  * channel stays silent there. Team tools carry the same structured fact in
@@ -117,7 +117,7 @@ function boardEntriesFromText(text: string): TeamBoardEntryView[] | undefined {
 }
 
 /**
- * Read one `tool/code-dispatch` record's metadata. The caller validates the
+ * Read one `tool/ptc-dispatch` record's metadata. The caller validates the
  * result with the same `readFact` boundary used for native tool results.
  * Historical facts that need name resolution read the roster from the state.
  * @param view - the state holding the roster and task list.

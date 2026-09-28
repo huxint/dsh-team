@@ -1,6 +1,6 @@
 import {
   ACESFilmicToneMapping, BasicShadowMap, Color, DirectionalLight, Fog, HemisphereLight, Material, Mesh, MeshBasicMaterial, MeshLambertMaterial,
-  PCFSoftShadowMap, PlaneGeometry, PointLight, Raycaster, Scene, ShadowMaterial, SRGBColorSpace, Texture, Vector2, Vector3, WebGLRenderer,
+  InstancedMesh, PCFSoftShadowMap, PlaneGeometry, PointLight, Raycaster, Scene, ShadowMaterial, SRGBColorSpace, Texture, Vector2, Vector3, WebGLRenderer,
   type BufferGeometry, type Object3D,
 } from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
@@ -12,6 +12,16 @@ import { createIsland, type Island } from './island.ts'
 import type { Position } from './layout.ts'
 import { WorldSimulation, type WorldMember } from './simulation.ts'
 
+/** Frame-rate ceilings: ambient life is slow, so it never needs the display's full refresh rate. */
+export const FRAME_RATE = { focused: 30, background: 15 } as const
+const SHADOW_INTERVAL = 1000 / 15
+const PIXEL_BUDGET = 1_500_000
+const SUN_DAY = new Color('#fff0d5')
+const SUN_DUSK = new Color('#ffd3a0')
+const MOON = new Color('#a3c6f4')
+const SKY_DAY = new Color('#e2ede0')
+const SKY_NIGHT = new Color('#8baccd')
+
 export interface WorldStats { fps: number; frameMs: number; cpuMs: number; calls: number; triangles: number; pixelRatio: number }
 export type FloorView = 'all' | 'ground' | 'terrace'
 
@@ -21,6 +31,8 @@ export function disposeObjects(root: Object3D): void {
   const textures = new Set<Texture>()
   root.traverse(object => {
     if (!(object instanceof Mesh)) return
+    // Instance buffers have their own GPU lifetime, separate from the geometry.
+    if (object instanceof InstancedMesh) object.dispose()
     geometries.add(object.geometry)
     for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
       materials.add(material)
@@ -53,11 +65,18 @@ export class WorldRenderer {
   visible = true
   reducedMotion = false
   contextLost = false
-  stats: WorldStats = { fps: 0, frameMs: 0, cpuMs: 0, calls: 0, triangles: 0, pixelRatio: 1.5 }
+  frameRate: number = FRAME_RATE.focused
+  stats: WorldStats = { fps: 0, frameMs: 0, cpuMs: 0, calls: 0, triangles: 0, pixelRatio: 1 }
   onFrame: (() => void) | undefined
   onStats: (() => void) | undefined
   private frame: number | undefined
+  private timer: ReturnType<typeof setTimeout> | undefined
   private lastFrame = 0
+  private lastRender = 0
+  /** A redraw that must not wait for the frame-rate ceiling (input, camera damping). */
+  private urgent = true
+  /** Whether the scene content (not just the camera) changed since the last shadow pass. */
+  private dirty = true
   private lastReport = 0
   private frames = 0
   private frameTimes: number[] = []
@@ -71,7 +90,10 @@ export class WorldRenderer {
   private rosterKey: string
   private disposed = false
   private lastQualityChange = 0
-  private lastShadow = 0
+  private lastShadow = -Infinity
+  private qualityRatio = 1
+  private previousContextLost = false
+  private updatingControls = false
 
   constructor(readonly canvas: HTMLCanvasElement, members: readonly WorldMember[], onSelect: (id: string) => void, onHover: (id: string | undefined) => void) {
     this.simulation = new WorldSimulation(members)
@@ -80,16 +102,16 @@ export class WorldRenderer {
     this.environment.setBounds(this.island.minX)
     this.view.setBounds(this.island.minX, this.island.maxX)
     this.view.reset()
-    this.renderer = new WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' })
+    this.renderer = new WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'low-power' })
     this.renderer.outputColorSpace = SRGBColorSpace
     this.renderer.toneMapping = ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.15
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = PCFSoftShadowMap
     this.renderer.shadowMap.autoUpdate = false
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.qualityRatio))
     this.sun.castShadow = true
-    this.sun.shadow.mapSize.set(2048, 2048)
+    this.sun.shadow.mapSize.set(1024, 1024)
     Object.assign(this.sun.shadow.camera, { left: -21, right: 21, top: 21, bottom: -21, near: 1, far: 75 })
     this.sun.shadow.bias = -0.00035
     this.sun.shadow.normalBias = 0.035
@@ -115,8 +137,8 @@ export class WorldRenderer {
     this.controls.rotateSpeed = 0.65
     this.controls.zoomSpeed = 0.85
     this.controls.screenSpacePanning = false
-    this.controls.addEventListener('change', this.invalidate)
-    this.controls.addEventListener('start', () => { this.view.interact(); this.invalidate() })
+    this.controls.addEventListener('change', () => { if (!this.updatingControls) this.redraw() })
+    this.controls.addEventListener('start', () => { this.view.interact(); this.redraw() })
     const pointers = new Set<number>()
     const down = (event: PointerEvent): void => {
       pointers.add(event.pointerId)
@@ -189,22 +211,30 @@ export class WorldRenderer {
   resize(width: number, height: number): void {
     if (width <= 0 || height <= 0) return
     this.view.resize(width, height)
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.qualityRatio, Math.sqrt(PIXEL_BUDGET / (width * height))))
     this.renderer.setSize(width, height, false)
-    this.invalidate()
+    this.redraw()
   }
 
-  setActivity(visible: boolean, reducedMotion: boolean, playing: boolean): void {
+  setActivity(visible: boolean, reducedMotion: boolean, playing: boolean, focused = this.frameRate === FRAME_RATE.focused): void {
+    const frameRate = focused ? FRAME_RATE.focused : FRAME_RATE.background
+    if (this.visible === visible && this.reducedMotion === reducedMotion && this.playing === playing
+      && this.frameRate === frameRate && this.previousContextLost === this.contextLost
+      && this.canvas.dataset.worldPaused !== undefined) return
+    this.previousContextLost = this.contextLost
     this.visible = visible
     this.reducedMotion = reducedMotion
     this.playing = playing
+    this.frameRate = frameRate
     this.controls.enableDamping = !reducedMotion
     this.canvas.dataset.worldPaused = String(!this.animating)
-    this.lastFrame = this.lastReport = 0
+    this.canvas.dataset.worldFrameLimit = String(this.frameRate)
+    this.lastFrame = this.lastRender = this.lastReport = 0
     this.frames = 0
     this.frameTimes.length = 0
     this.cpuTimes.length = 0
-    if (!visible || this.contextLost) this.cancelFrame()
-    else this.invalidate()
+    this.cancelFrame()
+    if (visible && !this.contextLost) this.invalidate()
   }
 
   setFloor(floor: FloorView): void {
@@ -223,7 +253,7 @@ export class WorldRenderer {
     this.view.camera.zoom = zoom
     this.view.camera.updateProjectionMatrix()
     this.controls.update()
-    this.invalidate()
+    this.redraw()
   }
 
   resetCamera(): void {
@@ -231,7 +261,7 @@ export class WorldRenderer {
     this.view.reset()
     this.controls.target.copy(this.view.target)
     this.controls.update()
-    this.invalidate()
+    this.redraw()
   }
 
   rotate(direction: number): void {
@@ -240,12 +270,36 @@ export class WorldRenderer {
     offset.applyAxisAngle(new Vector3(0, 1, 0), direction * Math.PI / 6)
     this.view.camera.position.copy(this.controls.target).add(offset)
     this.controls.update()
-    this.invalidate()
+    this.redraw()
   }
 
+  /** Schedule a frame after the scene content changed: residents, lights and shadows refresh. */
   readonly invalidate = (): void => {
+    this.dirty = true
+    this.lastShadow = -Infinity
+    this.redraw()
+  }
+
+  /** Schedule a prompt frame for a camera-only change; the shadow map stays as it is. */
+  readonly redraw = (): void => {
+    this.urgent = true
+    this.schedule()
+  }
+
+  private schedule(): void {
     if (this.frame !== undefined || !this.visible || this.contextLost || this.disposed) return
-    this.frame = requestAnimationFrame(this.tick)
+    if (this.urgent || this.lastRender === 0) {
+      if (this.timer !== undefined) clearTimeout(this.timer)
+      this.timer = undefined
+      this.frame = requestAnimationFrame(this.tick)
+    } else if (this.timer === undefined) {
+      // Sleep between ambient frames instead of waking at 120/144 Hz just to skip.
+      const delay = Math.max(0, this.lastRender + 1000 / this.frameRate - performance.now() - 8)
+      this.timer = setTimeout(() => {
+        this.timer = undefined
+        this.frame = requestAnimationFrame(this.tick)
+      }, delay)
+    }
   }
 
   get animating(): boolean { return this.playing && this.visible && !this.reducedMotion && !this.contextLost }
@@ -264,18 +318,68 @@ export class WorldRenderer {
 
   private cancelFrame(): void {
     if (this.frame !== undefined) cancelAnimationFrame(this.frame)
+    if (this.timer !== undefined) clearTimeout(this.timer)
     this.frame = undefined
+    this.timer = undefined
   }
 
   private readonly tick = (now: number): void => {
-    const started = performance.now()
     this.frame = undefined
-    const elapsed = this.lastFrame === 0 ? 0 : (now - this.lastFrame) / 1000
-    this.lastFrame = now
-    if (this.animating) this.simulation.step(Math.min(0.1, elapsed) * this.speed)
+    if (!this.visible || this.contextLost || this.disposed) return
+    // Between ceiling-paced frames the callback only re-arms itself. The
+    // deadline advances by whole intervals so refresh rates that do not divide
+    // the ceiling (75 Hz, 144 Hz) still average out to it.
+    // Input frames render at once, but only move the camera: the simulation
+    // still advances on the paced beat alone.
+    const interval = 1000 / this.frameRate
+    const due = this.lastRender === 0 || now - this.lastRender >= interval - 1
+    if (!due && !this.urgent) {
+      this.schedule()
+      return
+    }
+    this.urgent = false
+    const started = performance.now()
+    let elapsed = 0
+    if (due) {
+      this.lastRender = this.lastRender !== 0 && now - this.lastRender < interval * 2 ? this.lastRender + interval : now
+      elapsed = this.lastFrame === 0 ? 0 : (now - this.lastFrame) / 1000
+      this.lastFrame = now
+      if (this.animating && elapsed > 0) {
+        this.simulation.step(Math.min(0.1, elapsed) * this.speed)
+        this.dirty = true
+      }
+    }
     this.controls.target.x = Math.max(this.island.minX, Math.min(this.island.maxX, this.controls.target.x))
     this.controls.target.z = Math.max(-10, Math.min(12, this.controls.target.z))
+    this.updatingControls = true
     const moving = this.controls.update()
+    this.updatingControls = false
+    if (this.dirty) {
+      this.dirty = false
+      this.compose()
+      if (now - this.lastShadow >= SHADOW_INTERVAL - 1) {
+        this.renderer.shadowMap.needsUpdate = true
+        this.lastShadow = now
+      }
+    }
+    this.renderer.render(this.scene, this.view.camera)
+    this.canvas.dataset.worldReady = 'true'
+    this.canvas.dataset.worldHour = this.simulation.hour.toFixed(2)
+    this.canvas.dataset.worldZoom = this.view.camera.zoom.toFixed(3)
+    this.canvas.dataset.worldAngle = this.controls.getAzimuthalAngle().toFixed(4)
+    this.canvas.dataset.worldFrames = String(Number(this.canvas.dataset.worldFrames ?? 0) + 1)
+    this.onFrame?.()
+    this.cpuTimes.push(performance.now() - started)
+    if (this.lastReport === 0) this.lastReport = now
+    this.frames += 1
+    if (elapsed > 0) this.frameTimes.push(elapsed * 1000)
+    if (now - this.lastReport >= 750) this.report(now)
+    if (moving && this.controls.enableDamping) this.redraw()
+    else if (this.animating) this.schedule()
+  }
+
+  /** Bring lights, water, residents and island life up to the simulation's present. */
+  private compose(): void {
     const light = daylight(this.simulation.hour)
     skyColor(light.light, light.dusk, this.backdrop)
     this.scene.background = this.backdrop
@@ -285,64 +389,53 @@ export class WorldRenderer {
     this.sun.position.copy(light.night ? light.moon : light.sun)
     this.sun.position.y = Math.max(3, this.sun.position.y)
     this.sun.intensity = light.night ? 1.2 : 1.1 + light.light * 2.1
-    this.sun.color.set(light.night ? '#a3c6f4' : light.dusk > 0.4 ? '#ffd3a0' : '#fff0d5')
+    this.sun.color.copy(light.night ? MOON : light.dusk > 0.4 ? SUN_DUSK : SUN_DAY)
     this.ambient.intensity = 0.95 + light.light * 1.35
-    this.ambient.color.set(light.night ? '#8baccd' : '#e2ede0')
+    this.ambient.color.copy(light.night ? SKY_NIGHT : SKY_DAY)
     this.firelight.intensity = (1 - light.light) * (7 + Math.sin(this.simulation.seconds * 4) * 0.6)
     this.cafeLight.intensity = (1 - light.light) * 9
     this.island.lights.visible = light.light < 0.65
-    this.environment.update(this.simulation, this.floor === 'ground')
+    this.environment.update(this.simulation, light, this.floor === 'ground')
     this.characters.draw(this.simulation.residents, this.simulation.seconds, this.selected, this.focus, this.floor)
-    if (!this.animating || now - this.lastShadow >= 1000 / 30) {
-      this.renderer.shadowMap.needsUpdate = true
-      this.lastShadow = now
+  }
+
+  private report(now: number): void {
+    const times = this.frameTimes.sort((a, b) => a - b)
+    this.stats = {
+      fps: Math.round(this.frames * 1000 / (now - this.lastReport)),
+      frameMs: times[Math.min(times.length - 1, Math.floor(times.length * 0.95))] ?? 0,
+      cpuMs: this.cpuTimes.reduce((sum, time) => sum + time, 0) / this.cpuTimes.length,
+      calls: this.renderer.info.render.calls,
+      triangles: this.renderer.info.render.triangles,
+      pixelRatio: this.renderer.getPixelRatio(),
     }
-    this.renderer.render(this.scene, this.view.camera)
-    this.canvas.dataset.worldReady = 'true'
-    this.canvas.dataset.worldHour = this.simulation.hour.toFixed(2)
-    this.canvas.dataset.worldZoom = this.view.camera.zoom.toFixed(3)
-    this.canvas.dataset.worldAngle = this.controls.getAzimuthalAngle().toFixed(4)
-    this.onFrame?.()
-    this.cpuTimes.push(performance.now() - started)
-    if (this.lastReport === 0) this.lastReport = now
-    this.frames += 1
-    if (elapsed > 0) this.frameTimes.push(elapsed * 1000)
-    if (now - this.lastReport >= 750) {
-      const times = this.frameTimes.sort((a, b) => a - b)
-      this.stats = {
-        fps: Math.round(this.frames * 1000 / (now - this.lastReport)),
-        frameMs: times[Math.min(times.length - 1, Math.floor(times.length * 0.95))] ?? 0,
-        cpuMs: this.cpuTimes.reduce((sum, time) => sum + time, 0) / this.cpuTimes.length,
-        calls: this.renderer.info.render.calls,
-        triangles: this.renderer.info.render.triangles,
-        pixelRatio: this.renderer.getPixelRatio(),
-      }
-      this.lastReport = now
-      this.frames = 0
-      this.frameTimes = []
-      this.cpuTimes = []
-      this.onStats?.()
-      if (this.animating && this.stats.fps < 52 && now - this.lastQualityChange > 2500 && this.renderer.getPixelRatio() > 0.8) {
-        this.lastQualityChange = now
-        this.renderer.setPixelRatio(Math.max(0.8, this.renderer.getPixelRatio() - 0.2))
-        if (this.stats.fps < 25 && this.renderer.shadowMap.type !== BasicShadowMap) {
-          this.renderer.shadowMap.type = BasicShadowMap
-          this.scene.traverse(object => {
-            if (!(object instanceof Mesh)) return
-            for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
-              if (material instanceof MeshLambertMaterial || material instanceof ShadowMaterial) material.needsUpdate = true
-            }
-          })
+    this.lastReport = now
+    this.frames = 0
+    this.frameTimes = []
+    this.cpuTimes = []
+    this.onStats?.()
+    // Missing the ceiling while animating means the device is struggling:
+    // shed resolution first, then soft shadows and shadow-map resolution.
+    if (!this.animating || this.stats.fps >= this.frameRate * 0.8 || now - this.lastQualityChange <= 2500) return
+    this.lastQualityChange = now
+    this.qualityRatio = Math.max(0.7, this.qualityRatio - 0.15)
+    this.resize(this.view.width, this.view.height)
+    if (this.stats.fps < this.frameRate * 0.5 && this.renderer.shadowMap.type !== BasicShadowMap) {
+      this.renderer.shadowMap.type = BasicShadowMap
+      this.scene.traverse(object => {
+        if (!(object instanceof Mesh)) return
+        for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+          if (material instanceof MeshLambertMaterial || material instanceof ShadowMaterial) material.needsUpdate = true
         }
-        if (this.sun.shadow.mapSize.x > 1024) {
-          this.sun.shadow.mapSize.set(1024, 1024)
-          this.sun.shadow.map?.dispose()
-          this.sun.shadow.map = null
-        }
-        this.lastShadow = 0
-      }
+      })
     }
-    if (this.animating || moving) this.invalidate()
+    // Once resolution is at its floor, stop paying for dynamic shadow passes.
+    if (this.qualityRatio <= 0.7 && this.stats.fps < this.frameRate * 0.65) {
+      this.renderer.shadowMap.enabled = false
+      this.sun.castShadow = false
+      this.shadowFloor.visible = false
+    }
+    this.invalidate()
   }
 
   private pickMember(): string | undefined {

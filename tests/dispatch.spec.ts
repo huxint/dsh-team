@@ -1,4 +1,4 @@
-/** Round trips through the tools' real renderers and the code-mode log. */
+/** Round trips through the tools' real renderers and the PTC-mode log. */
 import { Context } from '@deepseek-ai/cordis'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition, ToolExecution, ToolExecutionSuccess } from '@deepseek-ai/dsh-tools'
@@ -43,7 +43,7 @@ const entries = [
   { key: 'next', authorId: 'child-2', authorName: 'Bob', updatedAt: TIME - 1, preview: 'second note' },
 ]
 
-describe('code-mode result fidelity', () => {
+describe('PTC-mode result fidelity', () => {
   it('retains reasoning_effort from a real spawn output', () => {
     const view = roundTrip(spawnTool(ctx), { name: 'Alice', relation: 'peer', task: 'review', reasoning_effort: 'high' }, alice)
     expect(view.members[0]?.effort).toBe('high')
@@ -80,7 +80,7 @@ describe('code-mode result fidelity', () => {
   })
 })
 
-describe('code-mode workspace snapshots', () => {
+describe('PTC-mode workspace snapshots', () => {
   it.each([{}, { key: 'plan' }, { key: 'missing' }])('records the full shared index when reading %j', args => {
     const selected = args.key === 'missing' ? [] : args.key === 'plan' ? entries.slice(0, 1) : entries
     const value = {
@@ -177,7 +177,8 @@ describe('host registry integration', () => {
     host.provide('systemPrompt', { tools() {}, section() {}, getSectionOrder() { return 0 } })
     host.provide('team', { spawn: async () => alice })
     const args = { name: 'Alice', relation: 'peer', task: 'review', reasoning_effort: 'high' }
-    host.provide('codeRuntime', {
+    host.provide('ptcRuntime', {
+      resolve: (request: unknown) => request,
       language: 'typescript',
       async run(request: { bindings: Array<{ functions: Record<string, (args: unknown) => Promise<unknown>> }> }) {
         const functions = request.bindings[0]!.functions
@@ -205,9 +206,9 @@ describe('host registry integration', () => {
     const result = await runtime.execute({
       callId: ToolCallId('outer'), name: 'run_code', arguments: { code: 'fixture', description: 'test team spawn' }, agent: leader.agent, signal,
     })
-    expect(result.isError).toBe(false)
+    expect(result.isError, JSON.stringify(result)).toBe(false)
     expect(result.value).toEqual({ logs: [], result: alice })
-    const settled = events.filter(event => event.type === 'tool/code-dispatch')
+    const settled = events.filter(event => event.type === 'tool/ptc-dispatch')
     expect(settled).toHaveLength(2)
     expect(settled.map(event => event.data.isError)).toEqual([false, true])
     // Exercise the durable JSON boundary: no value/meta property is available

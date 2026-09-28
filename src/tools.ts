@@ -5,7 +5,7 @@
  * teammate ever sees a tool it cannot use.
  *
  * Every mutating tool projects the WHOLE post-change entity through
- * `presentationMeta`, mirrored into finalized content for code-mode calls.
+ * `presentationMeta`, mirrored into finalized content for PTC-mode calls.
  * That projection is the team's durable record — see ./fold.ts for why the
  * plugin cannot append a session event of its own.
  *
@@ -83,7 +83,7 @@ function memberValue(member: TeamMemberFact): {
 }
 
 /**
- * Code-mode skips presentationMeta but durably logs finalized content. Carry
+ * PTC mode skips presentationMeta but durably logs finalized content. Carry
  * the same fact there, after the readable result, using only the harness's
  * existing text vocabulary. Native content and the code program's value keep
  * their usual shapes. Finalization sees the accepted outcome, so failed or

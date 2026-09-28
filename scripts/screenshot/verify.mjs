@@ -202,6 +202,7 @@ export async function benchmarkWorld(page, { url, settle }) {
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   const measure = milliseconds => page.evaluate(duration => new Promise(resolve => {
     const times = []
+    const initialFrames = Number(document.querySelector('canvas').dataset.worldFrames)
     const start = performance.now()
     let previous = start
     const frame = now => {
@@ -213,7 +214,10 @@ export async function benchmarkWorld(page, { url, settle }) {
       const gl = canvas.getContext('webgl2')
       const debug = gl.getExtension('WEBGL_debug_renderer_info')
       resolve({
-        frames: times.length, fps: Math.round(times.length * 10000 / (now - start)) / 10,
+        frames: Number(canvas.dataset.worldFrames) - initialFrames,
+        fps: Math.round((Number(canvas.dataset.worldFrames) - initialFrames) * 10000 / (now - start)) / 10,
+        displayFps: Math.round(times.length * 10000 / (now - start)) / 10,
+        frameLimit: Number(canvas.dataset.worldFrameLimit),
         medianMs: sorted[Math.floor(sorted.length * 0.5)], p95Ms: sorted[Math.floor(sorted.length * 0.95)],
         drawCalls: Number(canvas.dataset.worldDraws), triangles: Number(canvas.dataset.worldTriangles),
         cpuMs: Number(canvas.dataset.worldCpuMs),

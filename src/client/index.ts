@@ -12,6 +12,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { TeamView } from '../contract.ts'
 import { TeamStage, type TeamInjected, type TeamPanelState } from './TeamStage.tsx'
 import { ComposerAway } from './composer.tsx'
@@ -26,8 +27,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-/** Required services: the slot registry, the session domain, and locale. */
-export const inject = ['slots', 'sessions', 'locale']
+/** Required services: slots, session data, locale, and UI navigation. */
+export const inject = ['slots', 'sessions', 'locale', 'uiWorkspace']
 
 /** No session in view, or a session with no team. */
 const EMPTY: TeamPanelState = { members: [], tasks: [], messages: [], board: [] }
@@ -75,131 +76,73 @@ export function apply(ctx: ClientContext): void {
   const store = createSnapshotStore<TeamPanelState>(EMPTY)
 
   let followed: SessionId | undefined
-  let disposeFace: (() => void) | null = null
-  /**
-   * The leader's own projection, watched while somebody else's transcript is
-   * the one on screen. Reading a teammate attaches the follower to a session
-   * that folds no team of its own, so without this the world would freeze at the
-   * last value it saw — and would go on drawing a team that had already been
-   * disbanded. Watching the leader keeps the world live, and lets it close.
-   */
-  let disposeLeader: (() => void) | null = null
+  let active = true
+  const requested = new Set<SessionId>()
 
-  const dropLeader = (): void => {
-    disposeLeader?.()
-    disposeLeader = null
+  // Projection snapshots survive released conversation bindings in dsh 0.1.7.
+  // Reading them keeps the leader live without retaining its history or Agent scope.
+  const readTeam = (id: SessionId): TeamView | undefined => {
+    const list = sessions.list.getSnapshot()
+    const snapshot = list.projectionsBySession[id]
+    return (snapshot ? snapshot.values.team : list.byId[id]?.projectionValues?.team) as TeamView | undefined
   }
-
-  /** No team on screen: the world, and the tab it lives in, both go. */
-  const clear = (): void => {
-    dropLeader()
-    store.set(EMPTY)
+  const requestTeam = (id: SessionId): void => {
+    if (readTeam(id) !== undefined || requested.has(id)) return
+    requested.add(id)
+    void sessions.refreshProjections(id).then(() => { if (active) follow() }, () => {})
   }
-
-  /**
-   * Follow the leader of the team on screen while its own transcript is not.
-   * @param leaderId - the session whose log owns the team.
-   * @param current - the session being read, kept as the "you are here" marker.
-   */
-  const watchLeader = (leaderId: SessionId, current: SessionId): void => {
-    dropLeader()
-    const binding = sessions.binding(leaderId)
-    // The leader is unloaded: the team is still there, only nobody is folding
-    // it right now. The world holds what it last saw until the leader is back.
-    if (binding === undefined) return
-    const face = binding.session.projections.faceOf('team')
-    const pull = (): void => {
-      const team = face.getSnapshot() as TeamView | undefined
-      // Disbanded, or down to its last dismissed teammate: nothing to draw.
-      if (team === undefined || team.members.length === 0) {
-        clear()
-        return
-      }
-      store.set(panelState(leaderId, current, team))
-    }
-    disposeLeader = face.subscribe(pull)
-    pull()
-  }
-
-  /**
-   * The session in view folds no team of its own. While it belongs to the team
-   * already on screen, keep showing that team and just move the "you are here"
-   * marker — navigating into a member must not make the stage vanish under the
-   * cursor — and follow the leader from there, so the world closes with the team.
-   */
-  const holdOrClear = (current: SessionId): void => {
-    const held = store.getSnapshot()
-    if (held.leaderId === undefined || !held.members.some(member => member.memberId === current)) {
-      clear()
-      return
-    }
-    store.set({ ...held, currentId: current })
-    watchLeader(held.leaderId as SessionId, current)
-  }
-
   const follow = (): void => {
-    const current = sessions.list.getSnapshot().current
-    // Re-run while no face is held: the current id can be published before its
-    // binding exists, and the retry is one map lookup.
-    if (current === followed && (current === undefined || disposeFace !== null)) return
+    const list = sessions.list.getSnapshot()
+    // During a navigation the new reference is acquired before the old one is
+    // released. Keep the previous main view until its ownership ends.
+    const current = followed !== undefined && (list.byId[followed]?.retainedBy.mainView ?? 0) > 0
+      ? followed
+      : Object.values(list.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)?.id
+    if (followed !== current) requested.clear()
     followed = current
-    disposeFace?.()
-    disposeFace = null
-    if (current === undefined) {
-      clear()
-      return
-    }
-    const binding = sessions.binding(current)
-    if (binding === undefined) {
-      holdOrClear(current)
-      return
-    }
-    const face = binding.session.projections.faceOf('team')
-    const pull = (): void => {
-      const team = face.getSnapshot() as TeamView | undefined
-      if (team !== undefined && team.members.length > 0) {
-        // This session folds the team itself; no second subscription needed.
-        dropLeader()
+    if (current === undefined) { store.set(EMPTY); return }
+    const team = readTeam(current)
+    if (team !== undefined && team.members.length > 0) {
+      const previous = store.getSnapshot()
+      if (previous.currentId !== current || previous.leaderId !== current || previous.members !== team.members
+        || previous.tasks !== team.tasks || previous.messages !== team.messages || previous.board !== team.board || previous.boardAt !== team.boardAt) {
         store.set(panelState(current, current, team))
-        return
       }
-      holdOrClear(current)
+      return
     }
-    pull()
-    disposeFace = face.subscribe(pull)
+    const held = store.getSnapshot()
+    const leaderId = (held.members.some(member => member.memberId === current) ? held.leaderId : undefined) as SessionId | undefined
+      ?? sessions.subagentAddress(current)?.parentSessionId ?? list.byId[current]?.parentId
+    const leader = leaderId === undefined ? undefined : readTeam(leaderId)
+    if (leaderId !== undefined && leader?.members.some(member => member.memberId === current)) {
+      if (held.currentId !== current || held.leaderId !== leaderId || held.members !== leader.members
+        || held.tasks !== leader.tasks || held.messages !== leader.messages || held.board !== leader.board || held.boardAt !== leader.boardAt) {
+        store.set(panelState(leaderId, current, leader))
+      }
+    } else if (leaderId !== undefined && leader === undefined && held.leaderId === leaderId
+      && list.projectionsBySession[leaderId]?.state !== 'ready') {
+      if (held.currentId !== current) store.set({ ...held, currentId: current })
+    } else {
+      store.set(EMPTY)
+    }
+    requestTeam(current)
+    if (leaderId !== undefined) requestTeam(leaderId)
   }
 
-  follow()
   const disposeList = sessions.list.subscribe(follow)
+  follow()
   ctx.effect(() => () => {
+    active = false
     disposeList()
-    disposeFace?.()
-    disposeFace = null
-    dropLeader()
-    followed = undefined
+    requested.clear()
     store.set(EMPTY)
   }, 'dsh-team: session follower')
 
-  /** Open one teammate transcript through its durable direct-parent address. */
+  /** Navigate through the UI owner; it handles reference lifetime and failures. */
   const openMember = (leaderId: string, memberId: string): void => {
     const address: SubagentAddress = sessions.subagentAddress(memberId as SessionId)
       ?? { parentSessionId: leaderId as SessionId, childSessionId: memberId as SessionId, mode: 'continuable' }
-    try {
-      sessions.openSubagent(address)
-    } catch {
-      // Swallows only "not a healthy catalog child": the parent's child catalog
-      // has not been fetched yet in this client. Refresh it, then try once more.
-      void sessions.refreshSubagents(leaderId as SessionId).then(() => {
-        try {
-          sessions.openSubagent(address)
-        } catch {
-          // The child is genuinely absent from the refreshed catalog (dismissed
-          // and pruned, or a backend read failure); the stage stays put.
-        }
-      }, () => {
-        // The catalog read itself failed; the stage stays put, same as above.
-      })
-    }
+    ctx.uiWorkspace.openSession(address)
   }
 
   /**
@@ -223,7 +166,7 @@ export function apply(ctx: ClientContext): void {
   const injectFace = (): TeamInjected & { readonly hooks: { readonly team: typeof store } } => ({
     hooks: { team: store },
     openMember,
-    openLeader: (leaderId: string) => { sessions.open(leaderId as SessionId) },
+    openLeader: (leaderId: string) => { ctx.uiWorkspace.openSession(leaderId as SessionId) },
     holdComposer,
   })
 

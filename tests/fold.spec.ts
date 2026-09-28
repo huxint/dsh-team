@@ -178,7 +178,7 @@ describe('applyTeamEvent', () => {
 })
 
 
-describe('code-dispatch fold (code-mode deployments)', () => {
+describe('code-dispatch fold (PTC-mode deployments)', () => {
   const NL = String.fromCharCode(10)
   const spawnText = (name: string, id: string): string => 'teammate ' + name + ' joined as a managed member and started on its task. Address it as "' + name + '" or "' + id + '".'
 
@@ -231,7 +231,7 @@ describe('code-dispatch fold (code-mode deployments)', () => {
     expect(view.messages).toHaveLength(1)
     expect(view.messages[0].to).toBe('child-1')
     expect(view.messages[0].text).toBe('status?')
-    expect(view.messages[0].messageId.startsWith('root-1:code:')).toBe(true)
+    expect(view.messages[0].messageId.startsWith('root-1:ptc:')).toBe(true)
   })
 
   it('folds a shared board read snapshot and ignores private-pad reads', () => {

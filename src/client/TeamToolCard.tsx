@@ -67,7 +67,7 @@ function participant(state: TeamPanelState, reference: string | undefined, fallb
 
 function presentation(tool: TeamTool, block: ToolCallBlock, state: TeamPanelState, sessionId: string, t: Translate) {
   const settled = 'kind' in block
-  const raw = (settled ? block.call?.argsRaw : block.argsRaw) ?? ''
+  const raw = (settled ? block.call?.argsRaw : block.phase === 'start' ? block.argsRaw : undefined) ?? ''
   const args = parseArgs(raw)
   const status: 'running' | 'stopped' | 'error' | 'ok' = !settled ? 'running' : block.error?.code === 'interrupted' ? 'stopped' : block.isError ? 'error' : 'ok'
   const fact = settled && !block.isError ? readFact(block.meta) : undefined

@@ -13,7 +13,7 @@ import type { ContentBlock, MessageSource, UserMessage } from '@deepseek-ai/dsh-
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader, SessionId as SessionIdType } from '@deepseek-ai/dsh-session'
-import { queueSubagentPrompt } from '@deepseek-ai/dsh-subagent/internal'
+import { deliverSubagentPrompt } from '@deepseek-ai/dsh-subagent/internal'
 
 /** One delivery an agent double accepted through its inbox. */
 export interface AcceptedMessage {
@@ -146,7 +146,7 @@ export class FakeSubagents {
     return await Promise.resolve({ childId, messageId: `m-${childId}` })
   }
 
-  async [queueSubagentPrompt](
+  async [deliverSubagentPrompt](
     parent: Agent,
     childId: SessionIdType,
     content: ContentBlock[],
@@ -176,7 +176,7 @@ export class FakeAgents {
 
   add(agent: FakeAgent): FakeAgent {
     this.byId.set(agent.id, agent)
-    this.ctx?.emit('agent/created', { agent: agent.agent })
+    this.ctx?.emit('agent/created', { agent: agent.agent, source: 'startup' })
     return agent
   }
 
@@ -291,7 +291,7 @@ export function userMessageEvent(source: MessageSource, text: string, time?: num
 }
 
 /**
- * Build one `tool/code-dispatch` event — the code-mode log record of a
+ * Build one `tool/ptc-dispatch` event — the PTC-mode log record of a
  * nested tool call (name + arguments + rendered content, no meta).
  * @param name - the dispatched tool's name.
  * @param args - the sibling-parsed arguments the record carried.
@@ -305,13 +305,13 @@ export function codeDispatchEvent(name: string, args: Record<string, unknown>, c
 } = {}): SessionEvent {
   seq += 1
   return {
-    type: 'tool/code-dispatch',
+    type: 'tool/ptc-dispatch',
     seq,
     time: options.time ?? 1_700_000_000_000 + seq,
     data: {
       rootCallId: 'root-1',
       parentCallId: 'root-1',
-      subCallId: 'root-1:code:' + String(seq),
+      subCallId: 'root-1:ptc:' + String(seq),
       name,
       arguments: args,
       isError: options.isError === true,
@@ -343,5 +343,5 @@ export function fakeExec(agent: FakeAgent): { agent: Agent; signal: AbortSignal 
  * starts empty for every session, so the double carries nothing but identity.
  */
 export function testHeader(id = 'session-1'): SessionHeader {
-  return { version: 0, id: SessionId(id), createdAt: 1_700_000_000_000, isSeeded: false }
+  return { version: 4, id: SessionId(id), createdAt: 1_700_000_000_000, isSeeded: false }
 }

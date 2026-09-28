@@ -4,7 +4,7 @@ import {
 import { FLOOR_HEIGHT, LAND, POOL, POOL_LEVEL, SEA_LEVEL, TRAY } from './layout.ts'
 import type { WorldSimulation } from './simulation.ts'
 import { MovingVoxels, Voxels } from './voxels.ts'
-import { daylight } from './daylight.ts'
+import type { Daylight } from './daylight.ts'
 
 function water(rectangles: readonly (readonly [number, number, number, number])[], level: number, pool: boolean): Mesh<BufferGeometry, ShaderMaterial> {
   const positions: number[] = []
@@ -83,9 +83,8 @@ export class Environment {
     this.group.add(this.sea)
   }
 
-  update(simulation: WorldSimulation, cutaway: boolean): void {
+  update(simulation: WorldSimulation, light: Daylight, cutaway: boolean): void {
     const time = simulation.seconds
-    const light = daylight(simulation.hour)
     for (const surface of [this.sea, this.pool]) {
       surface.material.uniforms.time!.value = time
       surface.material.uniforms.daylight!.value = light.light
@@ -129,8 +128,12 @@ export class Environment {
           0.1, 0.018, 0.06, '#c6e9e3', 0, angle)
       }
     }
+    let lanes = 0
+    for (const actor of simulation.residents.values()) {
+      if (actor.motion === 'run') lanes |= actor.destination.id === 'run-0' ? 1 : actor.destination.id === 'run-1' ? 2 : 0
+    }
     if (!cutaway) for (let lane = 0; lane < 2; lane += 1) {
-      const running = [...simulation.residents.values()].some(actor => actor.motion === 'run' && actor.destination.id === `run-${lane}`)
+      const running = (lanes & (1 << lane)) !== 0
       for (let i = 0; i < 8; i += 1) {
         const shift = running ? time * 1.3 : 0
         v.box(undefined, 4 + lane * 2, FLOOR_HEIGHT + 0.24, -5.08 + (i * 0.2 + shift) % 1.55, 0.78, 0.018, 0.025, '#81908e')

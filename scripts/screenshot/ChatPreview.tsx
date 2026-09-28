@@ -25,7 +25,7 @@ const calls: Array<{ name: string, block: ToolCallBlock }> = [
   {
     name: 'team_send',
     block: {
-      callId: 'call-send', name: 'team_send', turn: 1, step: 3, time: 1_755_003_900_000, subCalls: [],
+      phase: 'start', callId: 'call-send', name: 'team_send', turn: 1, step: 3, time: 1_755_003_900_000, subCalls: [],
       argsRaw: JSON.stringify({ to: 'Orion', message: '接口迁移正在进行，请先补齐 storage 和鉴权边界的回归用例。' }, null, 2),
     },
   },

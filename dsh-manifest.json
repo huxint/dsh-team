@@ -1,6 +1,6 @@
 {
   "name": "dsh-team",
-  "version": "0.2.8",
+  "version": "0.2.10",
   "description": "Agent teams for DeepSeek Harness: named long-lived teammates over ctx.subagents, a shared task list, a member-to-member mailbox, virtual workspaces, and an interactive voxel world in the conversation view",
   "license": "MIT",
   "author": "huxint",
@@ -32,7 +32,8 @@
       "inject": [
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-api-session-controller",
-        "@deepseek-ai/dsh-client-ui-conversation"
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-workspace"
       ],
       "platform": "web"
     }

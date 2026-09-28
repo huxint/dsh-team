@@ -9,7 +9,8 @@
  * @module dsh-team/tests/client
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
+import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { TeamMemberView, TeamView } from '../src/contract.ts'
 import { apply, type TeamPanelState } from '../src/client/index.ts'
@@ -49,49 +50,47 @@ function teamOf(members: readonly TeamMemberView[]): TeamView {
 
 /** The session domain double: bindings, navigation, and the subagent catalog. */
 class FakeSessions {
-  readonly list = new Observable<{ current: string | undefined }>({ current: undefined })
+  readonly list = new Observable<SessionListState>({ ids: [], byId: {}, phase: 'ready', projectionsBySession: {} })
   readonly faces = new Map<string, Observable<TeamView | undefined>>()
   readonly opened: string[] = []
   readonly openedSubagents: Array<{ parentSessionId: string; childSessionId: string; mode: string }> = []
   readonly refreshed: string[] = []
-  /** Addresses the catalog already retains. */
   readonly addresses = new Map<string, { parentSessionId: string; childSessionId: string; mode: string }>()
-  /** Sessions with a live binding; a published id may arrive before one. */
   readonly bound = new Set<string>()
-  /** Child ids `openSubagent` refuses until the parent catalog is refreshed. */
-  readonly unknownChildren = new Set<string>()
 
-  /** Publish one session with a team value and a live binding. */
   seed(id: string, team?: TeamView): void {
-    this.faces.set(id, new Observable<TeamView | undefined>(team))
-    this.bound.add(id)
-  }
-
-  binding(id: string): { session: { projections: { faceOf: (key: string) => Observable<TeamView | undefined> } } } | undefined {
-    if (!this.bound.has(id)) return undefined
-    const face = this.faces.get(id) ?? new Observable<TeamView | undefined>(undefined)
+    const face = new Observable(team)
+    const originalSet = face.set.bind(face)
+    face.set = next => { originalSet(next); this.publish(id, next) }
     this.faces.set(id, face)
-    return { session: { projections: { faceOf: () => face } } }
+    this.bound.add(id)
+    this.publish(id, team)
   }
 
-  open(id: string): void {
-    this.opened.push(id)
+  publish(id: string, team?: TeamView): void {
+    const snapshot = this.list.getSnapshot()
+    this.list.set({ ...snapshot, projectionsBySession: { ...snapshot.projectionsBySession,
+      [id]: { values: team === undefined ? {} : { team }, state: 'ready', error: null },
+    } })
   }
 
-  subagentAddress(id: string): { parentSessionId: string; childSessionId: string; mode: string } | undefined {
-    return this.addresses.get(id)
+  select(id: string | undefined): void {
+    const snapshot = this.list.getSnapshot()
+    const ids = new Set([...Object.keys(snapshot.byId), ...id === undefined ? [] : [id]])
+    const byId = Object.fromEntries([...ids].map(key => [key, {
+      id: key, retainedBy: key === id ? { mainView: 1 } : {},
+      displayTitle: key, running: false, blank: false, updatedAt: 0,
+    }])) as SessionListState['byId']
+    this.list.set({ ...snapshot, byId })
   }
 
-  openSubagent(address: { parentSessionId: string; childSessionId: string; mode: string }): void {
-    if (this.unknownChildren.has(address.childSessionId)) throw new Error('not a healthy catalog child')
-    this.openedSubagents.push(address)
+  openSession(target: string | { parentSessionId: string; childSessionId: string; mode: string }): void {
+    if (typeof target === 'string') this.opened.push(target)
+    else this.openedSubagents.push(target)
   }
 
-  async refreshSubagents(parentId: string): Promise<void> {
-    this.refreshed.push(parentId)
-    for (const id of [...this.unknownChildren]) this.unknownChildren.delete(id)
-    await Promise.resolve()
-  }
+  subagentAddress(id: string) { return this.addresses.get(id) }
+  async refreshProjections(id: string): Promise<void> { this.refreshed.push(id) }
 }
 
 /** What the slot registration handed to the entry component. */
@@ -140,6 +139,7 @@ function mount(): void {
     },
     locale: { register: () => () => {}, bind: () => (key: string) => key },
     sessions,
+    uiWorkspace: sessions,
     slots: {
       inject: (_name: string, install: () => (() => void) | Array<() => void>) => {
         const effect = install()
@@ -206,7 +206,7 @@ function panel(): TeamPanelState {
 /** Seed a leader with a team and bring it into view, so the tab exists. */
 function seedTeam(): void {
   sessions.seed('leader-1', teamOf([alice]))
-  sessions.list.set({ current: 'leader-1' })
+  sessions.select('leader-1')
 }
 
 beforeEach(() => { mount() })
@@ -218,14 +218,14 @@ describe('following the current session', () => {
 
   it('publishes the team of the session that comes into view', () => {
     sessions.seed('leader-1', teamOf([alice]))
-    sessions.list.set({ current: 'leader-1' })
+    sessions.select('leader-1')
     expect(panel())
       .toEqual({ leaderId: 'leader-1', currentId: 'leader-1', members: [alice], tasks: [], messages: [], board: [] })
   })
 
   it('follows later pushes for the session on screen', () => {
     sessions.seed('leader-1', teamOf([]))
-    sessions.list.set({ current: 'leader-1' })
+    sessions.select('leader-1')
     expect(tabs).toEqual([])
 
     sessions.faces.get('leader-1')!.set(teamOf([alice]))
@@ -235,8 +235,8 @@ describe('following the current session', () => {
   it('holds the team while you read one of its teammates, moving the marker', () => {
     sessions.seed('leader-1', teamOf([alice]))
     sessions.seed('child-1', teamOf([]))
-    sessions.list.set({ current: 'leader-1' })
-    sessions.list.set({ current: 'child-1' })
+    sessions.select('leader-1')
+    sessions.select('child-1')
 
     expect(panel()).toMatchObject({ leaderId: 'leader-1', currentId: 'child-1', members: [alice] })
   })
@@ -244,25 +244,35 @@ describe('following the current session', () => {
   it('clears when an unrelated session comes into view', () => {
     sessions.seed('leader-1', teamOf([alice]))
     sessions.seed('other', teamOf([]))
-    sessions.list.set({ current: 'leader-1' })
-    sessions.list.set({ current: 'other' })
+    sessions.select('leader-1')
+    sessions.select('other')
 
     expect(tabs).toEqual([])
   })
 
-  it('attaches later when the current id arrives before its binding', () => {
-    sessions.faces.set('leader-1', new Observable<TeamView | undefined>(teamOf([alice])))
-    sessions.list.set({ current: 'leader-1' })
+  it('attaches when projections arrive after main-view ownership, without a binding', () => {
+    sessions.select('leader-1')
     expect(tabs).toEqual([])
-
-    sessions.bound.add('leader-1')
-    sessions.list.set({ current: 'leader-1' })
+    expect(sessions.refreshed).toContain('leader-1')
+    sessions.publish('leader-1', teamOf([alice]))
     expect(panel().members).toEqual([alice])
+  })
+
+  it('keeps the current view during overlapping navigation references', () => {
+    seedTeam()
+    sessions.seed('other', teamOf([]))
+    const snapshot = sessions.list.getSnapshot()
+    sessions.list.set({ ...snapshot, byId: { ...snapshot.byId,
+      ['other' as SessionListState['ids'][number]]: { ...Object.values(snapshot.byId)[0]!, id: 'other' as never, retainedBy: { mainView: 1 } },
+    } })
+    expect(panel().currentId).toBe('leader-1')
+    sessions.select('other')
+    expect(tabs).toEqual([])
   })
 
   it('drops every subscription and the tab when the row unloads', () => {
     seedTeam()
-    expect(sessions.faces.get('leader-1')!.watchers).toBe(1)
+    expect(sessions.list.watchers).toBe(1)
 
     teardown()
     expect(sessions.list.watchers).toBe(0)
@@ -278,7 +288,7 @@ describe('following the leader from inside a teammate', () => {
   function readTeammate(): void {
     seedTeam()
     sessions.seed('child-1', teamOf([]))
-    sessions.list.set({ current: 'child-1' })
+    sessions.select('child-1')
   }
 
   it('keeps the roster live: the leader is folding, the teammate is on screen', () => {
@@ -299,27 +309,44 @@ describe('following the leader from inside a teammate', () => {
     seedTeam()
     sessions.seed('child-1', teamOf([]))
     sessions.bound.delete('leader-1')
-    sessions.list.set({ current: 'child-1' })
+    sessions.select('child-1')
 
     expect(panel()).toMatchObject({ leaderId: 'leader-1', currentId: 'child-1', members: [alice] })
   })
 
-  it('watches the leader once, and lets go on the way back to it', () => {
+  it('uses one catalog subscription while switching between leader and teammate', () => {
     readTeammate()
-    expect(sessions.faces.get('leader-1')!.watchers).toBe(1)
+    expect(sessions.list.watchers).toBe(1)
 
-    sessions.list.set({ current: 'leader-1' })
-    expect(sessions.faces.get('leader-1')!.watchers).toBe(1)
+    sessions.select('leader-1')
+    expect(sessions.list.watchers).toBe(1)
     expect(sessions.faces.get('child-1')!.watchers).toBe(0)
   })
 
-  it('drops both subscriptions when the row unloads under a teammate', () => {
+  it('releases the catalog subscription when the row unloads under a teammate', () => {
     readTeammate()
 
     teardown()
     expect(sessions.faces.get('leader-1')!.watchers).toBe(0)
     expect(sessions.faces.get('child-1')!.watchers).toBe(0)
+    expect(sessions.list.watchers).toBe(0)
     expect(tabs).toEqual([])
+  })
+
+  it('closes the world when a refreshed leader snapshot removes the team projection', () => {
+    readTeammate()
+    sessions.publish('leader-1')
+    expect(tabs).toEqual([])
+  })
+
+  it('discovers a team when the first opened view is a child, without retaining the leader', () => {
+    sessions.addresses.set('child-1', { parentSessionId: 'leader-1', childSessionId: 'child-1', mode: 'continuable' })
+    sessions.select('child-1')
+    expect(tabs).toEqual([])
+    expect(sessions.refreshed).toContain('leader-1')
+    sessions.publish('leader-1', teamOf([alice]))
+    expect(panel()).toMatchObject({ leaderId: 'leader-1', currentId: 'child-1', members: [alice] })
+    expect(sessions.bound.size).toBe(0)
   })
 })
 
@@ -346,26 +373,12 @@ describe('navigation', () => {
     ])
   })
 
-  it('refreshes the catalog once and retries when the child is not retained yet', async () => {
-    sessions.unknownChildren.add('child-3')
-    tab().face.openMember('leader-1', 'child-3')
-    expect(sessions.openedSubagents).toEqual([])
-
-    await vi.waitFor(() => { expect(sessions.openedSubagents).toHaveLength(1) })
-    expect(sessions.refreshed).toEqual(['leader-1'])
+  it('can discover the team when opened directly into a child', () => {
+    sessions.addresses.set('child-1', { parentSessionId: 'leader-1', childSessionId: 'child-1', mode: 'continuable' })
+    sessions.select('child-1')
+    expect(panel()).toMatchObject({ leaderId: 'leader-1', currentId: 'child-1' })
   })
 
-  it('stays put when the child is absent even after the refresh', async () => {
-    sessions.unknownChildren.add('child-4')
-    sessions.refreshSubagents = async (parentId: string) => {
-      sessions.refreshed.push(parentId)
-      await Promise.resolve()
-    }
-    tab().face.openMember('leader-1', 'child-4')
-
-    await vi.waitFor(() => { expect(sessions.refreshed).toEqual(['leader-1']) })
-    expect(sessions.openedSubagents).toEqual([])
-  })
 })
 
 describe('the view tab', () => {
@@ -396,7 +409,7 @@ describe('the view tab', () => {
   it('keeps the tab while you read one of the teammates', () => {
     seedTeam()
     sessions.seed('child-1', teamOf([]))
-    sessions.list.set({ current: 'child-1' })
+    sessions.select('child-1')
     expect(tab().face.hooks.team.getSnapshot().currentId).toBe('child-1')
   })
 })
@@ -434,7 +447,7 @@ describe('chat contributions', () => {
   it('removes the avatars when navigating into an unrelated conversation', () => {
     seedTeam()
     sessions.seed('other')
-    sessions.list.set({ current: 'other' })
+    sessions.select('other')
 
     expect(utilities).toEqual([])
   })

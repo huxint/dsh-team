@@ -85,6 +85,7 @@ export function teamProjection(maxRecentMessages: number): TeamProjectionUnit {
     //    same view; the team_board render line carries author id and stamp.
     // 6: nested results carry the same whole facts as native results, including
     //    note writes and complete board snapshots; legacy references normalize.
-    stateVersion: 6,
+    // 7: nested calls arrive as session-format V4 tool/ptc-dispatch records.
+    stateVersion: 7,
   }
 }

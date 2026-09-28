@@ -188,7 +188,7 @@ describe('team tool cards', () => {
 
   it('keeps partial arguments inspectable while a call is running', () => {
     const raw = '{"name":"Alice","task":'
-    const view = toolCard('team_spawn', { callId: 'call-1', name: 'team_spawn', argsRaw: raw, time: 1000, turn: 1, step: 1, subCalls: [] })
+    const view = toolCard('team_spawn', { phase: 'start', callId: 'call-1', name: 'team_spawn', argsRaw: raw, time: 1000, turn: 1, step: 1, subCalls: [] })
     expect(screen.getByRole('status').textContent).toBe('In progress')
 
     fireEvent.click(screen.getByRole('button', { name: 'Expand call details' }))
